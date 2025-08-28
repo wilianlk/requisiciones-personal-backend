@@ -1,0 +1,6 @@
+@BackendRequisicionPersonal_HostAddress = http://localhost:5166
+
+GET {{BackendRequisicionPersonal_HostAddress}}/weatherforecast/
+Accept: application/json
+
+###
