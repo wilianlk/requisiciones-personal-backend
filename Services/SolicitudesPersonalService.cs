@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using BackendRequisicionPersonal.Models;
 using IBM.Data.Db2;
 using Microsoft.AspNetCore.Hosting;
@@ -52,7 +53,41 @@ namespace BackendRequisicionPersonal.Services
 
             try
             {
-                // IMPORTANTE: Esta lista de columnas coincide con tu CREATE TABLE (sin usuario_solicitante ni correo_vp).
+                // Aprobadores desde DTO
+                string? ap1Nombre = string.IsNullOrWhiteSpace(x.GerenteCanal) ? null : x.GerenteCanal.Trim();
+                string? ap1Correo = string.IsNullOrWhiteSpace(x.CorreoGerenteCanal) ? null : x.CorreoGerenteCanal.Trim();
+
+                string? ap2Nombre = string.IsNullOrWhiteSpace(x.GerenteDivision) ? null : x.GerenteDivision.Trim();
+                string? ap2Correo = string.IsNullOrWhiteSpace(x.CorreoGerenteDivision) ? null : x.CorreoGerenteDivision.Trim();
+
+                string? ap3Nombre = string.IsNullOrWhiteSpace(x.NombreVp) ? null : x.NombreVp.Trim();
+                string? ap3Correo = null; // agregar si lo tienes
+
+                // Estados iniciales por aprobador
+                string? ap1Estado = string.IsNullOrEmpty(ap1Correo) ? null : "PENDIENTE";
+                string? ap2Estado = string.IsNullOrEmpty(ap2Correo) ? null : "PENDIENTE";
+                string? ap3Estado = string.IsNullOrEmpty(ap3Correo) ? null : "PENDIENTE";
+
+                // Estado general inicial
+                string estado = string.IsNullOrWhiteSpace(x.Estado) ? "EN APROBACIÓN" : x.Estado.Trim();
+
+                // Nivel inicial
+                string nivel = "FINAL";
+                if (!string.IsNullOrEmpty(ap1Correo)) nivel = "1";
+                else if (!string.IsNullOrEmpty(ap2Correo)) nivel = "2";
+                else if (!string.IsNullOrEmpty(ap3Correo)) nivel = "3";
+
+                string creadoEn = string.IsNullOrWhiteSpace(x.CreadoEn) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : x.CreadoEn;
+                string fechaEnvio = string.IsNullOrWhiteSpace(x.FechaEnvioAprobacion) ? DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") : x.FechaEnvioAprobacion;
+                string? fechaAprob = string.IsNullOrWhiteSpace(x.FechaAprobacion) ? null : x.FechaAprobacion;
+
+                // Si no hay aprobadores → auto APROBADA
+                if (nivel == "FINAL" && (estado.Equals("EN APROBACIÓN", StringComparison.OrdinalIgnoreCase) || estado.Equals("PENDIENTE", StringComparison.OrdinalIgnoreCase)))
+                {
+                    estado = "APROBADA";
+                    fechaAprob = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+                }
+
                 var sql = @"
                 INSERT INTO solicitudes_aprobaciones_personal
                 (
@@ -64,8 +99,11 @@ namespace BackendRequisicionPersonal.Services
                   auxilio_movilizacion, salario_garantizado, meses_garantizado, promedio_variable, requiere_moto,
                   correo_gerente_canal, correo_gerente_division, area_solicitante, cargo_jefe_inmediato,
                   centro_costos_f, hora_inicio, hora_fin, activar_proceso_por, persona_reemplaza, tipo_jornada,
-                  estado_req, estado, nivel_aprobacion, creado_en, fecha_envio_aprobacion, fecha_aprobacion,
-                  nombre_candidato, doc_candidato, salario_asignado, fecha_ingreso, aprobaciones_ingreso
+                  estado, nivel_aprobacion, creado_en, fecha_envio_aprobacion, fecha_aprobacion,
+                  salario_asignado, fecha_ingreso, aprobaciones_ingreso,
+                  ap1_nombre, ap1_correo, ap1_estado, ap1_fecha, ap1_motivo,
+                  ap2_nombre, ap2_correo, ap2_estado, ap2_fecha, ap2_motivo,
+                  ap3_nombre, ap3_correo, ap3_estado, ap3_fecha, ap3_motivo
                 )
                 VALUES
                 (
@@ -77,8 +115,11 @@ namespace BackendRequisicionPersonal.Services
                   @auxilio_movilizacion, @salario_garantizado, @meses_garantizado, @promedio_variable, @requiere_moto,
                   @correo_gerente_canal, @correo_gerente_division, @area_solicitante, @cargo_jefe_inmediato,
                   @centro_costos_f, @hora_inicio, @hora_fin, @activar_proceso_por, @persona_reemplaza, @tipo_jornada,
-                  @estado_req, @estado, @nivel_aprobacion, @creado_en, @fecha_envio_aprobacion, @fecha_aprobacion,
-                  @nombre_candidato, @doc_candidato, @salario_asignado, @fecha_ingreso, @aprobaciones_ingreso
+                  @estado, @nivel_aprobacion, @creado_en, @fecha_envio_aprobacion, @fecha_aprobacion,
+                  @salario_asignado, @fecha_ingreso, @aprobaciones_ingreso,
+                  @ap1_nombre, @ap1_correo, @ap1_estado, NULL, NULL,
+                  @ap2_nombre, @ap2_correo, @ap2_estado, NULL, NULL,
+                  @ap3_nombre, @ap3_correo, @ap3_estado, NULL, NULL
                 )";
 
                 using var cmd = new DB2Command(sql, cn, tx);
@@ -99,68 +140,78 @@ namespace BackendRequisicionPersonal.Services
                     new DB2Parameter("@salario_basico", x.SalarioBasico ?? (object)DBNull.Value),
                     new DB2Parameter("@tipo_solicitud", x.TipoSolicitud ?? (object)DBNull.Value),
                     new DB2Parameter("@tipo_contrato", x.TipoContrato ?? (object)DBNull.Value),
-                    new DB2Parameter("@meses_contrato", x.MesesContrato ?? (object)DBNull.Value),
+                    new DB2Parameter("@meses_contrato", (object?)x.MesesContrato ?? DBNull.Value),
                     new DB2Parameter("@ciudad_trabajo", x.CiudadTrabajo ?? (object)DBNull.Value),
 
                     new DB2Parameter("@justificacion", x.Justificacion ?? (object)DBNull.Value),
                     new DB2Parameter("@correo_jefe", x.CorreoJefe ?? (object)DBNull.Value),
-                    new DB2Parameter("@canal", x.Canal ?? (object)DBNull.Value),
-                    new DB2Parameter("@area", x.Area ?? (object)DBNull.Value),
-                    new DB2Parameter("@gerente_division", x.GerenteDivision ?? (object)DBNull.Value),
-                    new DB2Parameter("@gerente_canal", x.GerenteCanal ?? (object)DBNull.Value),
+                    new DB2Parameter("@canal", (object?)x.Canal ?? DBNull.Value),
+                    new DB2Parameter("@area", (object?)x.Area ?? DBNull.Value),
+                    new DB2Parameter("@gerente_division", (object?)x.GerenteDivision ?? DBNull.Value),
+                    new DB2Parameter("@gerente_canal", (object?)x.GerenteCanal ?? DBNull.Value),
 
-                    new DB2Parameter("@terr_asignado", x.TerrAsignado ?? (object)DBNull.Value),
-                    new DB2Parameter("@cobro_automatico", x.CobroAutomatico ?? (object)DBNull.Value),
-                    new DB2Parameter("@zona_ciudades", x.ZonaCiudades ?? (object)DBNull.Value),
-                    new DB2Parameter("@clientes_cargo", x.ClientesCargo ?? (object)DBNull.Value),
-                    new DB2Parameter("@canales_cargo", x.CanalesCargo ?? (object)DBNull.Value),
+                    new DB2Parameter("@terr_asignado", (object?)x.TerrAsignado ?? DBNull.Value),
+                    new DB2Parameter("@cobro_automatico", (object?)x.CobroAutomatico ?? DBNull.Value),
+                    new DB2Parameter("@zona_ciudades", (object?)x.ZonaCiudades ?? DBNull.Value),
+                    new DB2Parameter("@clientes_cargo", (object?)x.ClientesCargo ?? DBNull.Value),
+                    new DB2Parameter("@canales_cargo", (object?)x.CanalesCargo ?? DBNull.Value),
 
-                    new DB2Parameter("@auxilio_movilizacion", x.AuxilioMovilizacion ?? (object)DBNull.Value),
-                    new DB2Parameter("@salario_garantizado", x.SalarioGarantizado ?? (object)DBNull.Value),
-                    new DB2Parameter("@meses_garantizado", x.MesesGarantizado ?? (object)DBNull.Value),
-                    new DB2Parameter("@promedio_variable", x.PromedioVariable ?? (object)DBNull.Value),
-                    new DB2Parameter("@requiere_moto", (x.RequiereMoto ? "SI" : "NO")),
+                    new DB2Parameter("@auxilio_movilizacion", (object?)x.AuxilioMovilizacion ?? DBNull.Value),
+                    new DB2Parameter("@salario_garantizado", (object?)x.SalarioGarantizado ?? DBNull.Value),
+                    new DB2Parameter("@meses_garantizado", (object?)x.MesesGarantizado ?? DBNull.Value),
+                    new DB2Parameter("@promedio_variable", (object?)x.PromedioVariable ?? DBNull.Value),
 
-                    new DB2Parameter("@correo_gerente_canal", x.CorreoGerenteCanal ?? (object)DBNull.Value),
-                    new DB2Parameter("@correo_gerente_division", x.CorreoGerenteDivision ?? (object)DBNull.Value),
-                    new DB2Parameter("@area_solicitante", x.AreaSolicitante ?? (object)DBNull.Value),
-                    new DB2Parameter("@cargo_jefe_inmediato", x.CargoJefeInmediato ?? (object)DBNull.Value),
-                    new DB2Parameter("@centro_costos_f", x.CentroCostosF ?? (object)DBNull.Value),
+                    // RequiereMoto puede venir como bool o string. Mantén tu DTO acorde.
+                    new DB2Parameter("@requiere_moto", x.RequiereMoto is bool b ? (b ? "SI" : "NO") :
+                                                      (string.Equals(Convert.ToString(x.RequiereMoto)?.Trim(), "SI", StringComparison.OrdinalIgnoreCase) ? "SI" : "NO")),
 
-                    new DB2Parameter("@hora_inicio", x.HoraInicio ?? (object)DBNull.Value),
-                    new DB2Parameter("@hora_fin", x.HoraFin ?? (object)DBNull.Value),
-                    new DB2Parameter("@activar_proceso_por", x.ActivarProcesoPor ?? (object)DBNull.Value),
-                    new DB2Parameter("@persona_reemplaza", x.PersonaReemplaza ?? (object)DBNull.Value),
-                    new DB2Parameter("@tipo_jornada", x.TipoJornada ?? (object)DBNull.Value),
+                    new DB2Parameter("@correo_gerente_canal", (object?)x.CorreoGerenteCanal ?? DBNull.Value),
+                    new DB2Parameter("@correo_gerente_division", (object?)x.CorreoGerenteDivision ?? DBNull.Value),
+                    new DB2Parameter("@area_solicitante", (object?)x.AreaSolicitante ?? DBNull.Value),
+                    new DB2Parameter("@cargo_jefe_inmediato", (object?)x.CargoJefeInmediato ?? DBNull.Value),
+                    new DB2Parameter("@centro_costos_f", (object?)x.CentroCostosF ?? DBNull.Value),
 
-                    new DB2Parameter("@estado_req", x.EstadoReq ?? (object)DBNull.Value),
-                    new DB2Parameter("@estado", x.Estado ?? (object)DBNull.Value),
-                    new DB2Parameter("@nivel_aprobacion", x.NivelAprobacion ?? (object)DBNull.Value),
-                    new DB2Parameter("@creado_en", x.CreadoEn ?? (object)DBNull.Value),
-                    new DB2Parameter("@fecha_envio_aprobacion", x.FechaEnvioAprobacion ?? (object)DBNull.Value),
-                    new DB2Parameter("@fecha_aprobacion", x.FechaAprobacion ?? (object)DBNull.Value),
+                    new DB2Parameter("@hora_inicio", (object?)x.HoraInicio ?? DBNull.Value),
+                    new DB2Parameter("@hora_fin", (object?)x.HoraFin ?? DBNull.Value),
+                    new DB2Parameter("@activar_proceso_por", (object?)x.ActivarProcesoPor ?? DBNull.Value),
+                    new DB2Parameter("@persona_reemplaza", (object?)x.PersonaReemplaza ?? DBNull.Value),
+                    new DB2Parameter("@tipo_jornada", (object?)x.TipoJornada ?? DBNull.Value),
 
-                    new DB2Parameter("@nombre_candidato", x.NombreCandidato ?? (object)DBNull.Value),
-                    new DB2Parameter("@doc_candidato", x.DocCandidato ?? (object)DBNull.Value),
-                    new DB2Parameter("@salario_asignado", x.SalarioAsignado ?? (object)DBNull.Value),
-                    new DB2Parameter("@fecha_ingreso", x.FechaIngreso ?? (object)DBNull.Value),
-                    new DB2Parameter("@aprobaciones_ingreso", x.AprobacionesIngreso ?? (object)DBNull.Value),
+                    new DB2Parameter("@estado", estado),
+                    new DB2Parameter("@nivel_aprobacion", nivel),
+                    new DB2Parameter("@creado_en", creadoEn),
+                    new DB2Parameter("@fecha_envio_aprobacion", fechaEnvio),
+                    new DB2Parameter("@fecha_aprobacion", (object?)fechaAprob ?? DBNull.Value),
+
+                    new DB2Parameter("@salario_asignado", (object?)x.SalarioAsignado ?? DBNull.Value),
+                    new DB2Parameter("@fecha_ingreso", (object?)x.FechaIngreso ?? DBNull.Value),
+                    new DB2Parameter("@aprobaciones_ingreso", (object?)x.AprobacionesIngreso ?? DBNull.Value),
+
+                    new DB2Parameter("@ap1_nombre", (object?)ap1Nombre ?? DBNull.Value),
+                    new DB2Parameter("@ap1_correo", (object?)ap1Correo ?? DBNull.Value),
+                    new DB2Parameter("@ap1_estado", (object?)ap1Estado ?? DBNull.Value),
+
+                    new DB2Parameter("@ap2_nombre", (object?)ap2Nombre ?? DBNull.Value),
+                    new DB2Parameter("@ap2_correo", (object?)ap2Correo ?? DBNull.Value),
+                    new DB2Parameter("@ap2_estado", (object?)ap2Estado ?? DBNull.Value),
+
+                    new DB2Parameter("@ap3_nombre", (object?)ap3Nombre ?? DBNull.Value),
+                    new DB2Parameter("@ap3_correo", (object?)ap3Correo ?? DBNull.Value),
+                    new DB2Parameter("@ap3_estado", (object?)ap3Estado ?? DBNull.Value),
                 });
                 cmd.ExecuteNonQuery();
 
-                using var getId = new DB2Command(
-                    "SELECT FIRST 1 id FROM solicitudes_aprobaciones_personal ORDER BY id DESC", cn, tx);
+                using var getId = new DB2Command("SELECT FIRST 1 id FROM solicitudes_aprobaciones_personal ORDER BY id DESC", cn, tx);
                 var idObj = getId.ExecuteScalar();
 
                 tx.Commit();
-
                 var id = idObj is null ? 0 : Convert.ToInt32(idObj);
-                _logger.LogInformation("Solicitud insertada correctamente. ID: {Id}, Solicitante: {Solicitante}", id, x.IdSolicitante);
+                _logger.LogInformation("Solicitud insertada correctamente. ID: {Id}", id);
                 return id;
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error al insertar solicitud para {Solicitante}", x?.IdSolicitante);
+                _logger.LogError(ex, "Error al insertar solicitud");
                 try { tx.Rollback(); } catch (Exception rbEx) { _logger.LogWarning(rbEx, "Error durante rollback"); }
                 return 0;
             }
@@ -174,18 +225,20 @@ namespace BackendRequisicionPersonal.Services
                 using var cn = new DB2Connection(_connectionString);
                 cn.Open();
 
-                // Sin usuario_solicitante ni correo_vp
                 var sql = @"
                 SELECT
-                  id, id_solicitante, tipo, fecha_solicitud, vicepresidencia, nombre_vp,
+                  id,
+                  id_solicitante, tipo, fecha_solicitud, vicepresidencia, nombre_vp,
                   jefe_inmediato, cargo_requerido, centro_costos, horario_trabajo, dias_laborales, salario_basico,
                   tipo_solicitud, tipo_contrato, meses_contrato, ciudad_trabajo, justificacion, correo_jefe,
                   canal, area, gerente_division, gerente_canal, terr_asignado, cobro_automatico, zona_ciudades,
                   clientes_cargo, canales_cargo, auxilio_movilizacion, salario_garantizado, meses_garantizado,
                   promedio_variable, requiere_moto, correo_gerente_canal, correo_gerente_division, area_solicitante,
                   cargo_jefe_inmediato, centro_costos_f, hora_inicio, hora_fin, activar_proceso_por, persona_reemplaza,
-                  tipo_jornada, estado_req, estado, nivel_aprobacion, creado_en, fecha_envio_aprobacion, fecha_aprobacion,
-                  nombre_candidato, doc_candidato, salario_asignado, fecha_ingreso, aprobaciones_ingreso
+                  tipo_jornada,
+                  estado, nivel_aprobacion, creado_en, fecha_envio_aprobacion, fecha_aprobacion,
+                  salario_asignado, fecha_ingreso, aprobaciones_ingreso,
+                  nombre_seleccionado, identificacion_seleccionado, fecha_ingreso_seleccionado, tipo_contrato_seleccionado
                 FROM solicitudes_aprobaciones_personal
                 WHERE id_solicitante = @u
                 ORDER BY id DESC";
@@ -198,6 +251,7 @@ namespace BackendRequisicionPersonal.Services
                     var o = new SolicitudPersonal
                     {
                         Id = r.GetInt32(0),
+
                         IdSolicitante = r.IsDBNull(1) ? null : r.GetString(1).Trim(),
                         Tipo = r.IsDBNull(2) ? null : r.GetString(2).Trim(),
                         FechaSolicitud = r.IsDBNull(3) ? null : r.GetString(3).Trim(),
@@ -243,18 +297,20 @@ namespace BackendRequisicionPersonal.Services
                         PersonaReemplaza = r.IsDBNull(40) ? null : r.GetString(40).Trim(),
                         TipoJornada = r.IsDBNull(41) ? null : r.GetString(41).Trim(),
 
-                        EstadoReq = r.IsDBNull(42) ? null : r.GetString(42).Trim(),
-                        Estado = r.IsDBNull(43) ? null : r.GetString(43).Trim(),
-                        NivelAprobacion = r.IsDBNull(44) ? null : r.GetString(44).Trim(),
-                        CreadoEn = r.IsDBNull(45) ? null : r.GetString(45).Trim(),
-                        FechaEnvioAprobacion = r.IsDBNull(46) ? null : r.GetString(46).Trim(),
-                        FechaAprobacion = r.IsDBNull(47) ? null : r.GetString(47).Trim(),
+                        Estado = r.IsDBNull(42) ? null : r.GetString(42).Trim(),
+                        NivelAprobacion = r.IsDBNull(43) ? null : r.GetString(43).Trim(),
+                        CreadoEn = r.IsDBNull(44) ? null : r.GetString(44).Trim(),
+                        FechaEnvioAprobacion = r.IsDBNull(45) ? null : r.GetString(45).Trim(),
+                        FechaAprobacion = r.IsDBNull(46) ? null : r.GetString(46).Trim(),
 
-                        NombreCandidato = r.IsDBNull(48) ? null : r.GetString(48).Trim(),
-                        DocCandidato = r.IsDBNull(49) ? null : r.GetString(49).Trim(),
-                        SalarioAsignado = r.IsDBNull(50) ? null : r.GetString(50).Trim(),
-                        FechaIngreso = r.IsDBNull(51) ? null : r.GetString(51).Trim(),
-                        AprobacionesIngreso = r.IsDBNull(52) ? null : r.GetString(52).Trim()
+                        SalarioAsignado = r.IsDBNull(47) ? null : r.GetString(47).Trim(),
+                        FechaIngreso = r.IsDBNull(48) ? null : r.GetString(48).Trim(),
+                        AprobacionesIngreso = r.IsDBNull(49) ? null : r.GetString(49).Trim(),
+
+                        NombreSeleccionado = r.IsDBNull(50) ? null : r.GetString(50).Trim(),
+                        IdentificacionSeleccionado = r.IsDBNull(51) ? null : r.GetString(51).Trim(),
+                        FechaIngresoSeleccionado = r.IsDBNull(52) ? null : r.GetString(52).Trim(),
+                        TipoContratoSeleccionado = r.IsDBNull(53) ? null : r.GetString(53).Trim(),
                     };
                     list.Add(o);
                 }
@@ -272,7 +328,6 @@ namespace BackendRequisicionPersonal.Services
         public List<string> ListarCanales()
         {
             var canales = new List<string>();
-
             try
             {
                 using var cn = new DB2Connection(_connectionString);
@@ -306,7 +361,6 @@ namespace BackendRequisicionPersonal.Services
         public List<CargoCanal> ListarCargosCanales(string? canal = null)
         {
             var list = new List<CargoCanal>();
-
             try
             {
                 using var cn = new DB2Connection(_connectionString);
@@ -352,33 +406,377 @@ namespace BackendRequisicionPersonal.Services
             return list;
         }
 
-        public bool AplicarAccion(int id, string estado, string? motivo = null)
+        public bool GuardarSeleccionado(SeleccionadoDto dto)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(estado)) return false;
+                if (dto is null || dto.Id <= 0)
+                {
+                    Console.WriteLine("[GuardarSeleccionado] DTO nulo o Id inválido");
+                    return false;
+                }
 
                 using var cn = new DB2Connection(_connectionString);
                 cn.Open();
 
                 var sql = @"
                 UPDATE solicitudes_aprobaciones_personal
-                   SET estado = @estado,
-                       fecha_aprobacion = CURRENT
+                   SET aprobaciones_ingreso         = @aprobaciones_ingreso,
+                       nombre_seleccionado          = @nombre_seleccionado,
+                       identificacion_seleccionado  = @identificacion_seleccionado,
+                       fecha_ingreso_seleccionado   = @fecha_ingreso_seleccionado,
+                       tipo_contrato_seleccionado   = @tipo_contrato_seleccionado,
+                       estado                       = 'SELECCIONADO'
                  WHERE id = @id";
 
                 using var cmd = new DB2Command(sql, cn);
-                cmd.Parameters.Add(new DB2Parameter("@estado", estado));
-                cmd.Parameters.Add(new DB2Parameter("@id", id));
+                cmd.Parameters.Add(new DB2Parameter("@aprobaciones_ingreso", (object?)dto.AprobacionesIngreso ?? DBNull.Value));
+                cmd.Parameters.Add(new DB2Parameter("@nombre_seleccionado", dto.NombreSeleccionado ?? (object)DBNull.Value));
+                cmd.Parameters.Add(new DB2Parameter("@identificacion_seleccionado", dto.IdentificacionSeleccionado ?? (object)DBNull.Value));
+
+                var fecha = dto.FechaIngresoSeleccionado?.ToString("yyyy-MM-dd");
+                cmd.Parameters.Add(new DB2Parameter("@fecha_ingreso_seleccionado", (object?)fecha ?? DBNull.Value));
+
+                cmd.Parameters.Add(new DB2Parameter("@tipo_contrato_seleccionado", dto.TipoContratoSeleccionado ?? (object)DBNull.Value));
+                cmd.Parameters.Add(new DB2Parameter("@id", dto.Id));
 
                 var n = cmd.ExecuteNonQuery();
-                _logger.LogInformation("AplicarAccion: id={Id}, estado={Estado}, updated={Rows}", id, estado, n);
+                Console.WriteLine($"[GuardarSeleccionado] id={dto.Id}, filas afectadas={n}, estado=SELECCIONADO");
                 return n > 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GuardarSeleccionado] Error id={dto?.Id}: {ex.Message}");
+                return false;
+            }
+        }
+
+        public bool AplicarAccion(int id, string estado, string? motivo = null, string? actorEmail = null)
+        {
+            try
+            {
+                if (id <= 0 || string.IsNullOrWhiteSpace(estado)) return false;
+
+                // Estados canónicos admitidos
+                var up = estado.Trim().ToUpperInvariant();
+                string decision = up switch
+                {
+                    "APROBADA" => "APROBADA",
+                    "RECHAZADA" => "RECHAZADA",
+                    _ => ""
+                };
+                if (string.IsNullOrEmpty(decision)) return false;
+
+                using var cn = new DB2Connection(_connectionString);
+                cn.Open();
+                using var tx = cn.BeginTransaction();
+
+                // Leer estado actual y aprobadores
+                var selSql = @"
+                SELECT nivel_aprobacion, estado,
+                       ap1_correo, ap1_estado,
+                       ap2_correo, ap2_estado,
+                       ap3_correo, ap3_estado
+                FROM solicitudes_aprobaciones_personal
+                WHERE id = @id";
+
+                string nivelActual, estadoGeneral;
+                string? ap1Correo, ap1Estado, ap2Correo, ap2Estado, ap3Correo, ap3Estado;
+
+                using (var sel = new DB2Command(selSql, cn, tx))
+                {
+                    sel.Parameters.Add(new DB2Parameter("@id", id));
+                    using var r = sel.ExecuteReader();
+                    if (!r.Read()) return false;
+
+                    nivelActual = r.IsDBNull(0) ? "FINAL" : r.GetString(0).Trim().ToUpperInvariant();
+                    estadoGeneral = r.IsDBNull(1) ? "EN APROBACIÓN" : r.GetString(1).Trim().ToUpperInvariant();
+
+                    ap1Correo = r.IsDBNull(2) ? null : r.GetString(2).Trim();
+                    ap1Estado = r.IsDBNull(3) ? null : r.GetString(3).Trim().ToUpperInvariant();
+
+                    ap2Correo = r.IsDBNull(4) ? null : r.GetString(4).Trim();
+                    ap2Estado = r.IsDBNull(5) ? null : r.GetString(5).Trim().ToUpperInvariant();
+
+                    ap3Correo = r.IsDBNull(6) ? null : r.GetString(6).Trim();
+                    ap3Estado = r.IsDBNull(7) ? null : r.GetString(7).Trim().ToUpperInvariant();
+                }
+
+                // Ya finalizada => idempotente
+                if (nivelActual == "FINAL" || estadoGeneral == "APROBADA" || estadoGeneral == "RECHAZADA")
+                {
+                    tx.Commit();
+                    return true;
+                }
+
+                int lvl = nivelActual switch { "1" => 1, "2" => 2, "3" => 3, _ => 1 };
+
+                // Validación suave del actor
+                string? correoEsperado = lvl == 1 ? ap1Correo : (lvl == 2 ? ap2Correo : ap3Correo);
+                if (!string.IsNullOrWhiteSpace(actorEmail) && !string.IsNullOrWhiteSpace(correoEsperado))
+                {
+                    var okActor = string.Equals(actorEmail.Trim(), correoEsperado.Trim(), StringComparison.OrdinalIgnoreCase);
+                    if (!okActor)
+                        _logger.LogWarning("Actor {Actor} no coincide con aprobador esperado {Esp} para id={Id} nivel={Nivel}", actorEmail, correoEsperado, id, lvl);
+                }
+
+                string prefix = $"ap{lvl}_";
+
+                // Si viene actorEmail, actualizamos correo del aprobador del nivel, tipando a CHAR(100)
+                string setCorreo = string.IsNullOrWhiteSpace(actorEmail)
+                    ? ""
+                    : $", {prefix}correo = CASE WHEN {prefix}correo IS NULL OR TRIM({prefix}correo) = '' " +
+                      $"THEN CAST(@actorEmail AS CHAR(100)) ELSE {prefix}correo END";
+
+                // Siguiente nivel si aprueba
+                string nextNivel = "FINAL";
+                if (decision == "APROBADA")
+                {
+                    if (lvl == 1)
+                    {
+                        if (!string.IsNullOrWhiteSpace(ap2Correo)) nextNivel = "2";
+                        else if (!string.IsNullOrWhiteSpace(ap3Correo)) nextNivel = "3";
+                        else nextNivel = "FINAL";
+                    }
+                    else if (lvl == 2)
+                    {
+                        if (!string.IsNullOrWhiteSpace(ap3Correo)) nextNivel = "3";
+                        else nextNivel = "FINAL";
+                    }
+                    else nextNivel = "FINAL";
+                }
+
+                bool finaliza = decision == "RECHAZADA" || nextNivel == "FINAL";
+
+                // TO_CHAR/CAST para compatibilidad de tipos en CASE (Informix)
+                var updSql = $@"
+                UPDATE solicitudes_aprobaciones_personal
+                   SET {prefix}estado = @decision,
+                       {prefix}fecha  = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S'),
+                       {prefix}motivo = @motivo
+                       {setCorreo}
+                     , estado = CASE WHEN @decision = 'RECHAZADA' THEN 'RECHAZADA' ELSE
+                                       CASE WHEN @finaliza = 1 THEN 'APROBADA' ELSE 'EN APROBACIÓN' END
+                                 END
+                     , nivel_aprobacion = CASE WHEN @decision = 'RECHAZADA' THEN 'FINAL' ELSE
+                                             CASE WHEN @finaliza = 1 THEN 'FINAL' ELSE @nextNivel END
+                                        END
+                     , fecha_aprobacion = CASE WHEN @decision = 'RECHAZADA' OR @finaliza = 1
+                                               THEN TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
+                                               ELSE fecha_aprobacion
+                                          END
+                 WHERE id = @id";
+
+                using (var upd = new DB2Command(updSql, cn, tx))
+                {
+                    upd.Parameters.Add(new DB2Parameter("@decision", decision));
+                    upd.Parameters.Add(new DB2Parameter("@motivo", (object?)motivo ?? DBNull.Value));
+                    if (!string.IsNullOrWhiteSpace(actorEmail))
+                        upd.Parameters.Add(new DB2Parameter("@actorEmail", actorEmail.Trim()));
+                    upd.Parameters.Add(new DB2Parameter("@finaliza", finaliza ? 1 : 0));
+                    upd.Parameters.Add(new DB2Parameter("@nextNivel", nextNivel));
+                    upd.Parameters.Add(new DB2Parameter("@id", id));
+
+                    var n = upd.ExecuteNonQuery();
+                    _logger.LogInformation("AplicarAccion: id={Id}, nivel={Nivel}, decision={Dec}, finaliza={Fin}, rows={Rows}", id, lvl, decision, finaliza, n);
+                    tx.Commit();
+                    return n > 0;
+                }
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error al aplicar acción {Estado} para id {Id}", estado, id);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Marca la revisión de RRHH (sello de fecha de envío a aprobación).
+        /// No altera estados de aprobadores.
+        /// </summary>
+        public bool MarcarRevisadoRrhh(int id)
+        {
+            try
+            {
+                using var cn = new DB2Connection(_connectionString);
+                cn.Open();
+                var sql = @"
+                    UPDATE solicitudes_aprobaciones_personal
+                       SET fecha_envio_aprobacion = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
+                     WHERE id = @id";
+                using var cmd = new DB2Command(sql, cn);
+                cmd.Parameters.Add(new DB2Parameter("@id", id));
+                var n = cmd.ExecuteNonQuery();
+                _logger.LogInformation("MarcarRevisadoRrhh: id={Id}, rows={Rows}", id, n);
+                return n > 0;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en MarcarRevisadoRrhh id={Id}", id);
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Devuelve el nivel actual (1/2/3/FINAL) y los correos del aprobador pendiente en ese nivel.
+        /// Útil para disparar notificaciones al siguiente aprobador (flujo secuencial).
+        /// </summary>
+        public (string Nivel, List<string> Correos) ObtenerCorreosAprobadorActual(int id)
+        {
+            var correos = new List<string>();
+            string nivel = "FINAL";
+
+            try
+            {
+                using var cn = new DB2Connection(_connectionString);
+                cn.Open();
+
+                var sql = @"
+                    SELECT
+                        TRIM(nivel_aprobacion),
+                        TRIM(ap1_correo), TRIM(ap1_estado),
+                        TRIM(ap2_correo), TRIM(ap2_estado),
+                        TRIM(ap3_correo), TRIM(ap3_estado)
+                    FROM solicitudes_aprobaciones_personal
+                    WHERE id = @id";
+
+                using var cmd = new DB2Command(sql, cn);
+                cmd.Parameters.Add(new DB2Parameter("@id", id));
+
+                using var r = cmd.ExecuteReader();
+                if (r.Read())
+                {
+                    nivel = r.IsDBNull(0) ? "FINAL" : r.GetString(0);
+
+                    string ap1Correo = r.IsDBNull(1) ? null : r.GetString(1);
+                    string ap1Estado = r.IsDBNull(2) ? null : r.GetString(2);
+                    string ap2Correo = r.IsDBNull(3) ? null : r.GetString(3);
+                    string ap2Estado = r.IsDBNull(4) ? null : r.GetString(4);
+                    string ap3Correo = r.IsDBNull(5) ? null : r.GetString(5);
+                    string ap3Estado = r.IsDBNull(6) ? null : r.GetString(6);
+
+                    bool pendiente(string s) => string.IsNullOrWhiteSpace(s) || s.Equals("PENDIENTE", StringComparison.OrdinalIgnoreCase);
+
+                    if (nivel == "1" && !string.IsNullOrWhiteSpace(ap1Correo) && pendiente(ap1Estado))
+                        correos.Add(ap1Correo);
+                    else if (nivel == "2" && !string.IsNullOrWhiteSpace(ap2Correo) && pendiente(ap2Estado))
+                        correos.Add(ap2Correo);
+                    else if (nivel == "3" && !string.IsNullOrWhiteSpace(ap3Correo) && pendiente(ap3Estado))
+                        correos.Add(ap3Correo);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en ObtenerCorreosAprobadorActual id={Id}", id);
+            }
+
+            return (nivel, correos);
+        }
+
+        /// <summary>
+        /// Devuelve los datos de la solicitud (para armar correo o mostrar detalle).
+        /// </summary>
+        public SolicitudPersonal? ObtenerSolicitudPorId(int id)
+        {
+            try
+            {
+                using var cn = new DB2Connection(_connectionString);
+                cn.Open();
+
+                var sql = @"
+                SELECT
+                  id,
+                  id_solicitante, tipo, fecha_solicitud, vicepresidencia, nombre_vp,
+                  jefe_inmediato, cargo_requerido, centro_costos, horario_trabajo, dias_laborales, salario_basico,
+                  tipo_solicitud, tipo_contrato, meses_contrato, ciudad_trabajo, justificacion, correo_jefe,
+                  canal, area, gerente_division, gerente_canal, terr_asignado, cobro_automatico, zona_ciudades,
+                  clientes_cargo, canales_cargo, auxilio_movilizacion, salario_garantizado, meses_garantizado,
+                  promedio_variable, requiere_moto, correo_gerente_canal, correo_gerente_division, area_solicitante,
+                  cargo_jefe_inmediato, centro_costos_f, hora_inicio, hora_fin, activar_proceso_por, persona_reemplaza,
+                  tipo_jornada,
+                  estado, nivel_aprobacion, creado_en, fecha_envio_aprobacion, fecha_aprobacion,
+                  salario_asignado, fecha_ingreso, aprobaciones_ingreso,
+                  nombre_seleccionado, identificacion_seleccionado, fecha_ingreso_seleccionado, tipo_contrato_seleccionado
+                FROM solicitudes_aprobaciones_personal
+                WHERE id = @id";
+
+                using var cmd = new DB2Command(sql, cn);
+                cmd.Parameters.Add(new DB2Parameter("@id", id));
+
+                using var r = cmd.ExecuteReader();
+                if (!r.Read()) return null;
+
+                var o = new SolicitudPersonal
+                {
+                    Id = r.GetInt32(0),
+
+                    IdSolicitante = r.IsDBNull(1) ? null : r.GetString(1).Trim(),
+                    Tipo = r.IsDBNull(2) ? null : r.GetString(2).Trim(),
+                    FechaSolicitud = r.IsDBNull(3) ? null : r.GetString(3).Trim(),
+                    Vicepresidencia = r.IsDBNull(4) ? null : r.GetString(4).Trim(),
+                    NombreVp = r.IsDBNull(5) ? null : r.GetString(5).Trim(),
+
+                    JefeInmediato = r.IsDBNull(6) ? null : r.GetString(6).Trim(),
+                    CargoRequerido = r.IsDBNull(7) ? null : r.GetString(7).Trim(),
+                    CentroCostos = r.IsDBNull(8) ? null : r.GetString(8).Trim(),
+                    HorarioTrabajo = r.IsDBNull(9) ? null : r.GetString(9).Trim(),
+                    DiasLaborales = r.IsDBNull(10) ? null : r.GetString(10).Trim(),
+                    SalarioBasico = r.IsDBNull(11) ? null : r.GetString(11).Trim(),
+                    TipoSolicitud = r.IsDBNull(12) ? null : r.GetString(12).Trim(),
+                    TipoContrato = r.IsDBNull(13) ? null : r.GetString(13).Trim(),
+                    MesesContrato = r.IsDBNull(14) ? null : r.GetString(14).Trim(),
+                    CiudadTrabajo = r.IsDBNull(15) ? null : r.GetString(15).Trim(),
+                    Justificacion = r.IsDBNull(16) ? null : r.GetString(16).Trim(),
+                    CorreoJefe = r.IsDBNull(17) ? null : r.GetString(17).Trim(),
+
+                    Canal = r.IsDBNull(18) ? null : r.GetString(18).Trim(),
+                    Area = r.IsDBNull(19) ? null : r.GetString(19).Trim(),
+                    GerenteDivision = r.IsDBNull(20) ? null : r.GetString(20).Trim(),
+                    GerenteCanal = r.IsDBNull(21) ? null : r.GetString(21).Trim(),
+                    TerrAsignado = r.IsDBNull(22) ? null : r.GetString(22).Trim(),
+                    CobroAutomatico = r.IsDBNull(23) ? null : r.GetString(23).Trim(),
+                    ZonaCiudades = r.IsDBNull(24) ? null : r.GetString(24).Trim(),
+                    ClientesCargo = r.IsDBNull(25) ? null : r.GetString(25).Trim(),
+                    CanalesCargo = r.IsDBNull(26) ? null : r.GetString(26).Trim(),
+                    AuxilioMovilizacion = r.IsDBNull(27) ? null : r.GetString(27).Trim(),
+                    SalarioGarantizado = r.IsDBNull(28) ? null : r.GetString(28).Trim(),
+                    MesesGarantizado = r.IsDBNull(29) ? null : r.GetString(29).Trim(),
+                    PromedioVariable = r.IsDBNull(30) ? null : r.GetString(30).Trim(),
+                    RequiereMoto = r.IsDBNull(31) ? null : r.GetString(31).Trim(),
+                    CorreoGerenteCanal = r.IsDBNull(32) ? null : r.GetString(32).Trim(),
+                    CorreoGerenteDivision = r.IsDBNull(33) ? null : r.GetString(33).Trim(),
+
+                    AreaSolicitante = r.IsDBNull(34) ? null : r.GetString(34).Trim(),
+                    CargoJefeInmediato = r.IsDBNull(35) ? null : r.GetString(35).Trim(),
+                    CentroCostosF = r.IsDBNull(36) ? null : r.GetString(36).Trim(),
+                    HoraInicio = r.IsDBNull(37) ? null : r.GetString(37).Trim(),
+                    HoraFin = r.IsDBNull(38) ? null : r.GetString(38).Trim(),
+                    ActivarProcesoPor = r.IsDBNull(39) ? null : r.GetString(39).Trim(),
+                    PersonaReemplaza = r.IsDBNull(40) ? null : r.GetString(40).Trim(),
+                    TipoJornada = r.IsDBNull(41) ? null : r.GetString(41).Trim(),
+
+                    Estado = r.IsDBNull(42) ? null : r.GetString(42).Trim(),
+                    NivelAprobacion = r.IsDBNull(43) ? null : r.GetString(43).Trim(),
+                    CreadoEn = r.IsDBNull(44) ? null : r.GetString(44).Trim(),
+                    FechaEnvioAprobacion = r.IsDBNull(45) ? null : r.GetString(45).Trim(),
+                    FechaAprobacion = r.IsDBNull(46) ? null : r.GetString(46).Trim(),
+
+                    SalarioAsignado = r.IsDBNull(47) ? null : r.GetString(47).Trim(),
+                    FechaIngreso = r.IsDBNull(48) ? null : r.GetString(48).Trim(),
+                    AprobacionesIngreso = r.IsDBNull(49) ? null : r.GetString(49).Trim(),
+
+                    NombreSeleccionado = r.IsDBNull(50) ? null : r.GetString(50).Trim(),
+                    IdentificacionSeleccionado = r.IsDBNull(51) ? null : r.GetString(51).Trim(),
+                    FechaIngresoSeleccionado = r.IsDBNull(52) ? null : r.GetString(52).Trim(),
+                    TipoContratoSeleccionado = r.IsDBNull(53) ? null : r.GetString(53).Trim(),
+                };
+
+                return o;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error en ObtenerSolicitudPorId id={Id}", id);
+                return null;
             }
         }
     }

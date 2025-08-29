@@ -1,8 +1,9 @@
+using System.IO;
+using BackendRequisicionPersonal.Models.Settings;
 using BackendRequisicionPersonal.Services;
 using BackendRequisicionPersonal.Services.Auth;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
-using System.IO;
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -27,6 +28,9 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddControllers();
 builder.Services.AddScoped<SolicitudesPersonalService>();
 builder.Services.AddScoped<AuthService>();
+
+// SMTP --> IOptions<SmtpSettings>
+builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("Smtp"));
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
