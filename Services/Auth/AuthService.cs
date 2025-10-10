@@ -43,7 +43,8 @@ namespace BackendRequisicionPersonal.Services.Auth
                         TRIM(aprobador3)                             AS aprobador3,
                         TRIM(correo_aprobador3)                      AS correoAprobador3,
                         TRIM(centro_de_costo)                        AS centroCosto,
-                        TRIM(vp)                                     AS vp
+                        TRIM(vp)                                     AS vp,
+                        TRIM(novedad)                                AS novedad
                     FROM requisiciones_aprobaciones_personal
                     WHERE TRIM(identificacion) = @Identificacion
                       AND UPPER(TRIM(e_mail)) = UPPER(@Correo)";
@@ -81,12 +82,13 @@ namespace BackendRequisicionPersonal.Services.Auth
                         CorreoAprobador3 = r["correoAprobador3"]?.ToString()?.Trim(),
                         CentroCosto = r["centroCosto"]?.ToString()?.Trim(),
                         Vp = r["vp"]?.ToString()?.Trim(),
+                        Novedad = r["novedad"]?.ToString()?.Trim(),
                         Roles = new List<string>()
                     };
                 }
 
                 usuario.Roles = await GetRolesAsync(usuario.Identificacion);
-                Console.WriteLine($"[AuthService] Usuario {identificacion} validado correctamente con {usuario.Roles.Count} rol(es).");
+                Console.WriteLine($"[AuthService] Usuario {identificacion} validado correctamente con {usuario.Roles.Count} perfil(es).");
                 return usuario;
             }
             catch (Exception ex)
@@ -102,13 +104,14 @@ namespace BackendRequisicionPersonal.Services.Auth
 
             try
             {
-                Console.WriteLine($"[AuthService] Consultando roles para usuario {identificacion}");
+                Console.WriteLine($"[AuthService] Consultando perfiles para usuario {identificacion}");
 
                 const string sql = @"
-                    SELECT r.nombre
-                    FROM requisiciones_solicitantes_roles sr
-                    JOIN requisiciones_roles r ON r.id = sr.rol_id
-                    WHERE sr.solicitante_identificacion = @Identificacion";
+                    SELECT TRIM(p.nombre) AS nombre
+                    FROM requisiciones_personal_usuarios_perfiles up
+                    JOIN requisiciones_personal_perfiles p ON p.id = up.perfil_id
+                    WHERE up.usuario_identificacion = @Identificacion
+                      AND p.activo = 1";
 
                 using var cn = new DB2Connection(_cs);
                 await cn.OpenAsync();
@@ -120,11 +123,11 @@ namespace BackendRequisicionPersonal.Services.Auth
                 while (await r.ReadAsync())
                     roles.Add(r["nombre"]?.ToString()?.Trim());
 
-                Console.WriteLine($"[AuthService] Roles encontrados para {identificacion}: {roles.Count}");
+                Console.WriteLine($"[AuthService] Perfiles encontrados para {identificacion}: {roles.Count}");
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[AuthService] Error consultando roles de {identificacion}: {ex.Message}");
+                Console.WriteLine($"[AuthService] Error consultando perfiles de {identificacion}: {ex.Message}");
             }
 
             return roles;

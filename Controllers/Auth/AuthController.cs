@@ -66,6 +66,7 @@ namespace BackendRequisicionPersonal.Controllers.Auth
                     correoAprobador3 = usuario.CorreoAprobador3,
                     centroCosto = usuario.CentroCosto,
                     vp = usuario.Vp,
+                    novedad = usuario.Novedad,
                     roles = usuario.Roles
                 });
             }

@@ -5,6 +5,7 @@
         public int Id { get; set; }
         public string? Cargo { get; set; }
         public string? CentroCostos { get; set; }
+        public string? Area { get; set; } 
         public string? Canal { get; set; }
     }
 }

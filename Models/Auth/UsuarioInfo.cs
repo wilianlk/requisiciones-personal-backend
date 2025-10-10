@@ -16,6 +16,7 @@
         public string? CorreoAprobador3 { get; set; }
         public string? CentroCosto { get; set; }
         public string? Vp { get; set; }
+        public string? Novedad { get; set; }
 
         public List<string> Roles { get; set; } = new();
     }

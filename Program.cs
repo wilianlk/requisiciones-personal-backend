@@ -40,9 +40,9 @@ builder.Services.AddCors(opt =>
 {
     opt.AddPolicy("AllowSpecificOrigins", p =>
         p.WithOrigins(
-              "http://192.168.20.30:8090",
+              "http://192.168.20.30:8092",
               "http://localhost:3000",
-              "https://reqordendecompra.recamier.com:8091"
+              "https://requisicionpersonal.recamier.com:8093"
           )
          .AllowAnyHeader()
          .AllowAnyMethod());

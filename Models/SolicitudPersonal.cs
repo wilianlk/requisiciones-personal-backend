@@ -83,5 +83,11 @@
         public string Ap3Estado { get; set; }
         public string Ap3Fecha { get; set; }
         public string Ap3Motivo { get; set; }
+
+        public string? Ap1EstadoUi { get; set; }
+        public string? Ap2EstadoUi { get; set; }
+        public string? Ap3EstadoUi { get; set; }
+        public string? NivelActualUi { get; set; }
+        public string? EstadoUi { get; set; }
     }
 }

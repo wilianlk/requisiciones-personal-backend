@@ -132,7 +132,7 @@ namespace BackendRequisicionPersonal.Controllers
 
         /* ===========================================================
          *  GH marca revisado → EN APROBACION
-         *  Correos: (1) solicitante (2) aprobador actual (con botones)
+         *  Correos: (1) solicitante (dedupe con aprobadores) (2) aprobador actual (con botones)
          * =========================================================== */
         [HttpPost("revisado-rrhh")]
         public async Task<IActionResult> RevisadoRrhh([FromQuery] int id)
@@ -162,11 +162,24 @@ namespace BackendRequisicionPersonal.Controllers
                 // 3) Refrescar la solicitud para tener el estado actualizado
                 var sol = _service.ObtenerSolicitudPorId(id) ?? solPrev;
 
-                // 4) Aviso al solicitante (correo individual)
-                await EnviarCorreoEstadoSolicitanteAsync(sol, "EN APROBACIÓN");
-
-                // 5) Enviar al aprobador actual con botones (sin CC al solicitante)
+                // 4) Aprobador(es) del nivel actual
                 var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
+
+                if (EsAdministrativo(sol))
+                {
+                    // ADMINISTRATIVO: un solo correo al Aprobador 1 (con botones), sin informativo al solicitante
+                    var aprobador1 = FirstEmail(correosRaw);
+                    if (!string.IsNullOrWhiteSpace(aprobador1))
+                        await EnviarCorreoAprobadorAsync(sol, aprobador1);
+                    else
+                        _logger.LogWarning("⚠️ RevisadoRRHH(ADMIN): sin aprobador1 id={Id}", id);
+
+                    return Ok(new { success = true, message = "Revisión GH registrada. Notificado solo Aprobador 1 (ADMINISTRATIVO)." });
+                }
+
+                // COMERCIAL: informativo al solicitante SOLO si no coincide con aprobador; siempre enviar a aprobador(es)
+                await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
+
                 var correos = DistinctNormalizedEmails(correosRaw);
                 if (correos.Count == 0)
                 {
@@ -236,12 +249,12 @@ namespace BackendRequisicionPersonal.Controllers
         }
 
         [HttpGet("cargos-canales")]
-        public IActionResult ListarCargosCanales([FromQuery] string? canal = null)
+        public IActionResult ListarCargosCanales([FromQuery] string? area = null)
         {
-            _logger.LogInformation("➡️  GET /api/requisiciones/cargos-canales canal={Canal}", canal);
+            _logger.LogInformation("➡️  GET /api/requisiciones/cargos-canales area={Area}", area);
             try
             {
-                var data = _service.ListarCargosCanales(canal);
+                var data = _service.ListarCargosCanales(area);
                 if (data == null || data.Count == 0)
                     return NotFound(new { success = false, message = "Sin registros" });
 
@@ -249,18 +262,18 @@ namespace BackendRequisicionPersonal.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error en cargos-canales canal={Canal}: {Msg}", canal, ex.Message);
+                _logger.LogError(ex, "❌ Error en cargos-canales area={Area}: {Msg}", area, ex.Message);
                 return StatusCode(500, new { success = false, message = "Error interno" });
             }
         }
 
         [HttpGet("cargos-administrativos")]
-        public IActionResult ListarCargosAdministrativos([FromQuery] string? canal = null, [FromQuery] string? area = null)
+        public IActionResult ListarCargosAdministrativos([FromQuery] string? area = null)
         {
-            _logger.LogInformation("➡️  GET /api/requisiciones/cargos-administrativos canal={Canal} area={Area}", canal, area);
+            _logger.LogInformation("➡️  GET /api/requisiciones/cargos-administrativos area={Area}", area);
             try
             {
-                var data = _service.ListarCargosAdministrativos(canal, area);
+                var data = _service.ListarCargosAdministrativos(area);
                 if (data == null || data.Count == 0)
                     return NotFound(new { success = false, message = "Sin registros" });
 
@@ -268,15 +281,11 @@ namespace BackendRequisicionPersonal.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error en cargos-administrativos canal={Canal} area={Area}: {Msg}", canal, area, ex.Message);
+                _logger.LogError(ex, "❌ Error en cargos-administrativos area={Area}: {Msg}", area, ex.Message);
                 return StatusCode(500, new { success = false, message = "Error interno" });
             }
         }
 
-        /* ===========================================================
-         *  Seleccionado → EN SELECCION
-         *  Correos: (1) solicitante  (2) GH con botones
-         * =========================================================== */
         [HttpPost("seleccionado")]
         public async Task<IActionResult> GuardarSeleccionado([FromBody] SeleccionadoDto dto)
         {
@@ -303,21 +312,27 @@ namespace BackendRequisicionPersonal.Controllers
                     var sol = _service.ObtenerSolicitudPorId(dto.Id);
                     if (sol != null)
                     {
-                        // 1) Solicitante (correo individual)
-                        await EnviarCorreoEstadoSolicitanteAsync(sol, "EN SELECCIÓN");
+                        // 1) Aviso al solicitante → ya está en VP GH
+                        await EnviarCorreoEstadoSolicitanteAsync(sol, "EN VP GH");
 
-                        // 2) GH con botones (aprobar selección → EN VP GH)
-                        var aGh = GetCorreosGestionHumana();
-                        if (aGh.Any())
-                            await EnviarCorreoGhConBotonesAsync(sol, aGh, "EN SELECCIÓN");
+                        // 2) Correo a la Vicepresidencia (con botones)
+                        var aVp = GetCorreosVpGh().ToList();
+                        if (aVp.Any())
+                        {
+                            await EnviarCorreoVpGhConBotonesAsync(sol, aVp);
+                        }
+                        else
+                        {
+                            _logger.LogWarning("⚠️ GuardarSeleccionado: no hay correos configurados en VPGH");
+                        }
                     }
                 }
                 catch (Exception exMail)
                 {
-                    _logger.LogError(exMail, "❌ Error enviando correo de seleccionado id={Id}: {Msg}", dto.Id, exMail.Message);
+                    _logger.LogError(exMail, "❌ Error enviando correos de GuardarSeleccionado id={Id}: {Msg}", dto.Id, exMail.Message);
                 }
 
-                return Ok(new { success = true, message = "Datos guardados y notificaciones enviadas" });
+                return Ok(new { success = true, message = "Seleccionado guardado y notificaciones enviadas a VP GH." });
             }
             catch (Exception ex)
             {
@@ -329,10 +344,10 @@ namespace BackendRequisicionPersonal.Controllers
         /* ===========================================================
          *  Acciones Aprobación / Rechazo (flujo secuencial)
          *  Lógica de envíos post-acción según NUEVO estado:
-         *   - EN APROBACION  → correo a siguiente aprobador + aviso independiente a solicitante
+         *   - EN APROBACION  → correo a siguiente aprobador + aviso (dedupe con aprobadores)
          *   - EN SELECCION   → correo a GH con botones + aviso a solicitante
-         *   - EN VP GH       → correo con botones a VP GH
-         *   - CERRADO        → correos separados a Nómina y a GH
+         *   - EN VP GH       → correo con botones a VP GH (uno o varios)
+         *   - CERRADO        → correos separados a Nómina (uno o varios) y a GH
          *   - RECHAZADA      → correo al solicitante
          * =========================================================== */
         [HttpGet("accion")]
@@ -348,8 +363,8 @@ namespace BackendRequisicionPersonal.Controllers
                 return BadRequest(new { success = false, message = "Parámetros inválidos" });
 
             var up = estado.Trim().ToUpperInvariant();
-            if (up != "APROBADA" && up != "RECHAZADA")
-                return BadRequest(new { success = false, message = "Estado inválido. Use APROBADA o RECHAZADA." });
+            if (up != "APROBADA" && up != "RECHAZADA" && up != "CERRADO")
+                return BadRequest(new { success = false, message = "Estado inválido. Use APROBADA, RECHAZADA o CERRADO." });
 
             try
             {
@@ -380,15 +395,27 @@ namespace BackendRequisicionPersonal.Controllers
                 switch (estadoActual)
                 {
                     case "EN APROBACION":
-                        // 1) Aviso al solicitante
-                        await EnviarCorreoEstadoSolicitanteAsync(sol, "EN APROBACIÓN");
-                        // 2) Aprobador actual (sin CC al solicitante)
                         {
-                            var (_, correos) = _service.ObtenerCorreosAprobadorActual(id);
-                            foreach (var correoAp in correos.Where(c => !string.IsNullOrWhiteSpace(c)))
+                            var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
+
+                            if (EsAdministrativo(sol))
+                            {
+                                // ADMINISTRATIVO: solo aprobador del nivel actual (uno), sin informativo al solicitante
+                                var aprobador1 = FirstEmail(correosRaw);
+                                if (!string.IsNullOrWhiteSpace(aprobador1))
+                                    await EnviarCorreoAprobadorAsync(sol, aprobador1);
+
+                                return Ok(new { success = true, message = "APROBADA → siguiente aprobador (ADMINISTRATIVO: solo Aprobador 1)." });
+                            }
+
+                            // COMERCIAL: informativo al solicitante SOLO si no coincide con aprobador; y correo(s) al aprobador(es)
+                            await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
+
+                            foreach (var correoAp in DistinctNormalizedEmails(correosRaw).Where(c => !string.IsNullOrWhiteSpace(c)))
                                 await EnviarCorreoAprobadorAsync(sol, correoAp.Trim());
+
+                            return Ok(new { success = true, message = "APROBADA → siguiente aprobador" });
                         }
-                        return Ok(new { success = true, message = "APROBADA → siguiente aprobador" });
 
                     case "EN SELECCION":
                         // Aprobaciones completadas → GH con botones + solicitante
@@ -398,19 +425,21 @@ namespace BackendRequisicionPersonal.Controllers
                             if (aGh.Any())
                                 await EnviarCorreoGhConBotonesAsync(sol, aGh, "EN SELECCIÓN");
                         }
-                        return Ok(new { success = true, message = "APROBADA FINAL → EN SELECCIÓN (GH notificado con botones)" });
+                        return Ok(new { success = true, message = "APROBADA FINAL → EN SELECCIÓN" });
 
                     case "EN VP GH":
-                        // Ya está en VP GH → notificar VP GH con botones
+                        // Ya está en VP GH → notificar VP GH con botones (uno o varios)
                         {
-                            var correoVp = _config.GetValue<string>("VPGH:Correo");
-                            if (!string.IsNullOrWhiteSpace(correoVp))
-                                await EnviarCorreoVpGhConBotonesAsync(sol, correoVp!.Trim());
+                            var aVp = GetCorreosVpGh().ToList();
+                            if (aVp.Any())
+                                await EnviarCorreoVpGhConBotonesAsync(sol, aVp);
+                            else
+                                _logger.LogWarning("⚠️ EN VP GH: no hay correos configurados en VPGH:Correo/Correos");
                         }
-                        return Ok(new { success = true, message = "EN VP GH → VP notificado con botones" });
+                        return Ok(new { success = true, message = "EN VP GH → VP notificado" });
 
                     case "CERRADO":
-                        // VP GH aprobó → Correos separados a Nómina y GH
+                        // VP GH aprobó → Correos separados a Nómina (uno o varios) y GH
                         await EnviarCorreoCierreANominaYGhAsync(sol);
                         return Ok(new { success = true, message = "CERRADO → Nómina y GH notificados" });
 
@@ -448,9 +477,11 @@ namespace BackendRequisicionPersonal.Controllers
                 var ok = _service.ActualizarEstadoEnVpGh(id);
                 if (!ok) return StatusCode(500, new { success = false, message = "No se actualizó el estado EN VP GH" });
 
-                var vpGhCorreo = _config.GetValue<string>("VPGH:Correo");
-                if (!string.IsNullOrWhiteSpace(vpGhCorreo))
-                    await EnviarCorreoVpGhConBotonesAsync(sol, vpGhCorreo.Trim());
+                var aVp = GetCorreosVpGh().ToList();
+                if (aVp.Any())
+                    await EnviarCorreoVpGhConBotonesAsync(sol, aVp);
+                else
+                    _logger.LogWarning("⚠️ vpgh/enviar: no hay correos configurados en VPGH:Correo/Correos");
 
                 return Ok(new { success = true, message = "Estado actualizado a EN VP GH y correo enviado al VP GH (con botones)." });
             }
@@ -463,7 +494,7 @@ namespace BackendRequisicionPersonal.Controllers
 
         /* ===========================================================
          *  VP GH: aprobar → "CERRADO"
-         *  Correos: separados a Nómina y GH
+         *  Correos: separados a Nómina y GH (múltiples soportados)
          * =========================================================== */
         [HttpPost("vpgh/aprobar")]
         public async Task<IActionResult> AprobarVpGhCerrar([FromQuery] int id)
@@ -510,8 +541,34 @@ namespace BackendRequisicionPersonal.Controllers
 
         private IEnumerable<string> GetCorreosGestionHumana()
         {
+            // Mantiene compatibilidad con RRHH:CorreosRevision (array)
             var arr = _config.GetSection("RRHH:CorreosRevision").Get<string[]>() ?? Array.Empty<string>();
             return DistinctNormalizedEmails(arr);
+        }
+
+        // 🔹 NUEVOS: lectura flexible (string "Correo" y/o array "Correos")
+        private IEnumerable<string> GetCorreosVpGh()
+        {
+            var one = _config["VPGH:Correo"];
+            var many = _config.GetSection("VPGH:Correos").Get<string[]>();
+            var list = new List<string>();
+            if (!string.IsNullOrWhiteSpace(one)) list.Add(one.Trim());
+            if (many is { Length: > 0 }) list.AddRange(many.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+            var res = DistinctNormalizedEmails(list);
+            _logger.LogInformation("VPGH destinatarios: {To}", string.Join(", ", res));
+            return res;
+        }
+
+        private IEnumerable<string> GetCorreosNomina()
+        {
+            var one = _config["Nomina:Correo"];
+            var many = _config.GetSection("Nomina:Correos").Get<string[]>();
+            var list = new List<string>();
+            if (!string.IsNullOrWhiteSpace(one)) list.Add(one.Trim());
+            if (many is { Length: > 0 }) list.AddRange(many.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()));
+            var res = DistinctNormalizedEmails(list);
+            _logger.LogInformation("Nómina destinatarios: {To}", string.Join(", ", res));
+            return res;
         }
 
         private IEnumerable<string> DestinatariosSolicitante(SolicitudPersonal sol)
@@ -572,6 +629,56 @@ namespace BackendRequisicionPersonal.Controllers
                 "CERRADO" => "-",
                 _ => "-"
             };
+        }
+
+        /* ===================== Helpers nuevos (deduplicación y tipo) ===================== */
+
+        // ¿Es tipo ADMINISTRATIVO?
+        private static bool EsAdministrativo(SolicitudPersonal s)
+            => string.Equals((s.Tipo ?? "").Trim(), "ADMINISTRATIVO", StringComparison.OrdinalIgnoreCase);
+
+        // Primer correo no vacío (Aprobador 1)
+        private static string? FirstEmail(IEnumerable<string> correosRaw)
+            => correosRaw?
+                .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c))?
+                .Trim()
+                .ToLowerInvariant();
+
+        // Notifica al solicitante SOLO si su buzón NO coincide con algún aprobador (evita doble correo)
+        private async Task NotificarSolicitanteSinDuplicarAprobadoresAsync(
+            SolicitudPersonal sol,
+            string estadoTitulo,
+            IEnumerable<string> aprobadoresRaw
+        )
+        {
+            try
+            {
+                var aprobadores = DistinctNormalizedEmails(aprobadoresRaw ?? Array.Empty<string>());
+                var solicitantes = DistinctNormalizedEmails(DestinatariosSolicitante(sol));
+                var soloSolicitantes = solicitantes.Except(aprobadores).ToList();
+
+                if (soloSolicitantes.Count == 0)
+                {
+                    _logger.LogInformation("ℹ️ Aviso solicitante omitido por coincidencia con aprobador (id={Id})", sol.Id);
+                    return;
+                }
+
+                foreach (var to in soloSolicitantes)
+                {
+                    using var smtp = BuildSmtp();
+                    using var mail = BaseMail(sol,
+                        $"Requisición #{sol.Id} — {estadoTitulo}",
+                        TemplateCorreoInfoSolicitante(sol, estadoTitulo));
+                    mail.To.Add(to);
+                    AddCcPowerApps(mail);
+                    await smtp.SendMailAsync(mail);
+                    _logger.LogInformation("📧 Solicitante notificado ({Estado}) a {To} (id={Id})", estadoTitulo, to, sol.Id);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error en NotificarSolicitanteSinDuplicarAprobadoresAsync id={Id}: {Msg}", sol.Id, ex.Message);
+            }
         }
 
         /* ===================== ENVÍOS SMTP ===================== */
@@ -666,46 +773,59 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        // --- VP GH con botones ---
-        private async Task EnviarCorreoVpGhConBotonesAsync(SolicitudPersonal sol, string correoVpGh)
+        // --- VP GH con botones (uno o varios) ---
+        private async Task EnviarCorreoVpGhConBotonesAsync(SolicitudPersonal sol, IEnumerable<string> destinatariosVpGh)
         {
             try
             {
+                var toList = DistinctNormalizedEmails(destinatariosVpGh);
+                if (toList.Count == 0)
+                {
+                    _logger.LogWarning("VP GH: no hay destinatarios para enviar (id={Id}).", sol.Id);
+                    return;
+                }
+
                 using var smtp = BuildSmtp();
                 using var mail = BaseMail(sol,
                     $"Requisición #{sol.Id} — EN VP GH",
                     TemplateCorreoVpGhConBotones(sol));
-                mail.To.Add(correoVpGh);
+
+                foreach (var to in toList) mail.To.Add(to);
                 AddCcPowerApps(mail);
+
                 await smtp.SendMailAsync(mail);
-                _logger.LogInformation("📧 Correo VP GH (botones) a {To} (id={Id})", correoVpGh, sol.Id);
+                _logger.LogInformation("📧 Correo VP GH (botones) a {To} (id={Id})", string.Join(", ", toList), sol.Id);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error correo VP GH a {To} (id={Id}): {Msg}", correoVpGh, sol.Id, ex.Message);
+                _logger.LogError(ex, "❌ Error correo VP GH (id={Id}): {Msg}", sol.Id, ex.Message);
             }
         }
 
-        // --- Cierre: correos separados a Nómina y GH ---
+        // --- Cierre: correos separados a Nómina (uno o varios) y GH ---
         private async Task EnviarCorreoCierreANominaYGhAsync(SolicitudPersonal sol)
         {
             try
             {
-                var nomina = (_config.GetValue<string>("Nomina:Correo") ?? "").Trim();
+                var nomina = GetCorreosNomina().ToList();
                 var gh = GetCorreosGestionHumana().ToList();
 
-                // 1) Nómina
-                if (!string.IsNullOrWhiteSpace(nomina))
+                // 1) Nómina (en un solo correo con todos en "To")
+                if (nomina.Any())
                 {
                     using var smtp1 = BuildSmtp();
                     using var mail1 = BaseMail(sol, $"Requisición #{sol.Id} — CERRADO", TemplateCorreoCierre(sol));
-                    mail1.To.Add(nomina);
+                    foreach (var to in nomina) mail1.To.Add(to);
                     AddCcPowerApps(mail1);
                     await smtp1.SendMailAsync(mail1);
-                    _logger.LogInformation("📧 Cierre enviado a Nómina ({To}) id={Id}", nomina, sol.Id);
+                    _logger.LogInformation("📧 Cierre enviado a Nómina ({To}) id={Id}", string.Join(", ", nomina), sol.Id);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Cierre: no hay correos configurados en Nomina:Correo/Correos");
                 }
 
-                // 2) GH
+                // 2) GH (en un solo correo con todos en "To")
                 if (gh.Any())
                 {
                     using var smtp2 = BuildSmtp();
@@ -714,6 +834,10 @@ namespace BackendRequisicionPersonal.Controllers
                     AddCcPowerApps(mail2);
                     await smtp2.SendMailAsync(mail2);
                     _logger.LogInformation("📧 Cierre enviado a GH ({To}) id={Id}", string.Join(", ", gh), sol.Id);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ Cierre: no hay correos configurados en RRHH:CorreosRevision");
                 }
             }
             catch (Exception ex)
@@ -758,8 +882,8 @@ namespace BackendRequisicionPersonal.Controllers
             var sb = new StringBuilder();
             sb.AppendLine("<table style='width:100%; border-collapse:collapse; margin:8px 0;'>");
             sb.AppendLine(row("ID", $"#{s.Id}"));
-            sb.AppendLine(row("Estado actual", EstadoTitulo(s.Estado)));
-            sb.AppendLine(row("Acción requerida por", CalcularAccionRequerida(s.Estado, s.NivelAprobacion)));
+            //sb.AppendLine(row("Estado actual", EstadoTitulo(s.Estado)));
+            //sb.AppendLine(row("Acción requerida por", CalcularAccionRequerida(s.Estado, s.NivelAprobacion)));
             sb.AppendLine(row("Nivel aprobación", s.NivelAprobacion));
             sb.AppendLine(row("Tipo", s.Tipo));
             sb.AppendLine(row("Cargo requerido", s.CargoRequerido));
@@ -883,18 +1007,18 @@ namespace BackendRequisicionPersonal.Controllers
             var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA");
 
             var buttons = $@"
-{info}
-<div style='margin:18px 0; display:flex; gap:12px;'>
-  <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     APROBAR
-  </a>
-  <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     RECHAZAR
-  </a>
-</div>
-<p style='font-size:12px;color:#666;margin-top:8px;'>Use los botones para continuar el flujo.</p>";
+            {info}
+            <div style='margin:18px 0; display:flex; gap:12px;'>
+              <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 APROBAR
+              </a>
+              <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 RECHAZAR
+              </a>
+            </div>
+            <p style='font-size:12px;color:#666;margin-top:8px;'>Use los botones para continuar el flujo.</p>";
 
             var titulo = $"Requisición #{s.Id} — {estadoTitulo}";
             return ShellCorreo(titulo, header + buttons);
@@ -904,27 +1028,27 @@ namespace BackendRequisicionPersonal.Controllers
         private string TemplateCorreoAprobador(SolicitudPersonal s, string aprobadorEmail)
         {
             var header = EncabezadoBasico(s) + @"
-<div style='margin:8px 0 4px 0;'>
-  <span style='display:inline-block;background:#eef2ff;color:#3730a3;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:bold;'>
-    Te corresponde aprobar o rechazar esta solicitud
-  </span>
-</div>" + DetallePorTipo(s);
+            <div style='margin:8px 0 4px 0;'>
+              <span style='display:inline-block;background:#eef2ff;color:#3730a3;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:bold;'>
+                Te corresponde aprobar o rechazar esta solicitud
+              </span>
+            </div>" + DetallePorTipo(s);
 
             var aprobarUrl = BuildAccionUrl(s.Id, "APROBADA", aprobadorEmail);
             var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA", aprobadorEmail);
 
             var buttons = $@"
-<div style='margin:18px 0; display:flex; gap:12px;'>
-  <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     APROBAR
-  </a>
-  <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     RECHAZAR
-  </a>
-</div>
-<p style='font-size:12px;color:#666;margin-top:8px;'>Si deseas indicar motivo de rechazo, puedes responder a este correo.</p>";
+            <div style='margin:18px 0; display:flex; gap:12px;'>
+              <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 APROBAR
+              </a>
+              <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 RECHAZAR
+              </a>
+            </div>
+            <p style='font-size:12px;color:#666;margin-top:8px;'>Si deseas indicar motivo de rechazo, puedes responder a este correo.</p>";
 
             var titulo = $"Requisición #{s.Id} — EN APROBACIÓN";
             return ShellCorreo(titulo, header + buttons);
@@ -935,20 +1059,20 @@ namespace BackendRequisicionPersonal.Controllers
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
 
-            var aprobarUrl = BuildAccionUrl(s.Id, "APROBADA");   // → CERRADO
+            var aprobarUrl = BuildAccionUrl(s.Id, "CERRADO");   // → CERRADO
             var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA");  // → RECHAZADA (avisa a solicitante)
 
             var buttons = $@"
-<div style='margin:18px 0; display:flex; gap:12px;'>
-  <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     APROBAR (Cerrar)
-  </a>
-  <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
-     style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-     RECHAZAR
-  </a>
-</div>";
+            <div style='margin:18px 0; display:flex; gap:12px;'>
+              <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 APROBAR (Cerrar)
+              </a>
+              <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
+                 style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+                 RECHAZAR
+              </a>
+            </div>";
 
             var titulo = $"Requisición #{s.Id} — EN VP GH";
             return ShellCorreo(titulo, header + buttons);
@@ -978,20 +1102,33 @@ namespace BackendRequisicionPersonal.Controllers
             return $"{baseUrl}{relativePathAndQuery}";
         }
 
-        private static string EstadoVisible(string? raw)
+        [HttpGet("listar-por-aprobador")]
+        public async Task<IActionResult> ListarPorAprobador([FromQuery] string correo)
         {
-            var e = (raw ?? "").Trim().ToUpperInvariant();
-            return e switch
+            _logger.LogInformation("➡️ GET /api/requisiciones/listar-por-aprobador correo={Correo}", correo);
+
+            try
             {
-                "EN REVISION POR GESTION GH" => "EN REVISIÓN POR GESTIÓN GH",
-                "EN APROBACION" => "EN APROBACIÓN",
-                "EN SELECCION" => "EN SELECCIÓN",
-                "APROBADA" => "APROBADA",
-                "RECHAZADA" => "RECHAZADA",
-                "EN VP GH" => "EN VP GH",
-                "CERRADO" => "CERRADO",
-                _ => string.IsNullOrWhiteSpace(e) ? "-" : e
-            };
+                if (string.IsNullOrWhiteSpace(correo))
+                    return BadRequest(new { success = false, message = "Debe indicar el parámetro correo (correo del aprobador)." });
+
+                var data = await _service.ListarPendientesPorCorreoAprobador(correo);
+
+                if (data == null || data.Count == 0)
+                {
+                    _logger.LogWarning("⚠️ Sin requisiciones pendientes para correo {Correo}", correo);
+                    return NotFound(new { success = false, message = "Sin pendientes para aprobar." });
+                }
+
+                _logger.LogInformation("✅ {Total} requisiciones encontradas para correo {Correo}", data.Count, correo);
+                return Ok(new { success = true, total = data.Count, data });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error en listar-por-aprobador correo={Correo}", correo);
+                return StatusCode(500, new { success = false, message = "Error interno del servidor" });
+            }
         }
+
     }
 }
