@@ -460,8 +460,6 @@ namespace BackendRequisicionPersonal.Services
 
             return list;
         }
-
-
         public List<CargoCanal> ListarCargosCanales(string? area = null)
         {
             var list = new List<CargoCanal>();
@@ -511,8 +509,6 @@ namespace BackendRequisicionPersonal.Services
             }
             return list;
         }
-
-
         public List<dynamic> ListarCargosAdministrativos(string? area)
         {
             var result = new List<dynamic>();
@@ -571,7 +567,6 @@ namespace BackendRequisicionPersonal.Services
             }
             return result;
         }
-
         public List<string> ListarCanales()
         {
             var canales = new List<string>();
@@ -601,7 +596,6 @@ namespace BackendRequisicionPersonal.Services
             }
             return canales;
         }
-
         public bool GuardarSeleccionado(BackendRequisicionPersonal.Models.SeleccionadoDto dto)
         {
             try
@@ -645,7 +639,6 @@ namespace BackendRequisicionPersonal.Services
                 return false;
             }
         }
-
         public bool AplicarAccion(int id, string estado, string? motivo = null, string? actorEmail = null, string? actorNombre = null)
         {
             try
@@ -884,7 +877,6 @@ namespace BackendRequisicionPersonal.Services
                 return false;
             }
         }
-
         public bool MarcarRevisadoRrhh(int id)
         {
             try
@@ -911,7 +903,6 @@ namespace BackendRequisicionPersonal.Services
                 return false;
             }
         }
-
         public bool ActualizarEstadoEnVpGh(int id)
         {
             try
@@ -937,7 +928,6 @@ namespace BackendRequisicionPersonal.Services
                 return false;
             }
         }
-
         public bool CerrarRequisicion(int id)
         {
             try
@@ -965,7 +955,6 @@ namespace BackendRequisicionPersonal.Services
                 return false;
             }
         }
-
         public (string Nivel, List<string> Correos) ObtenerCorreosAprobadorActual(int id)
         {
             var correos = new List<string>();
@@ -1017,7 +1006,6 @@ namespace BackendRequisicionPersonal.Services
 
             return (nivel, correos);
         }
-
         public SolicitudPersonal? ObtenerSolicitudPorId(int id)
         {
             try
@@ -1147,7 +1135,6 @@ namespace BackendRequisicionPersonal.Services
                 return null;
             }
         }
-
         public (string Asunto, string Html) ConstruirCorreoRequisicion(int id)
         {
             string estado = "DESCONOCIDO";
@@ -1403,6 +1390,69 @@ ORDER BY fecha_solicitud DESC";
             return lista;
         }
 
+        public async Task<List<dynamic>> GetSolicitudesVpGhAsync(string identificacion)
+        {
+            var resultados = new List<dynamic>();
+
+            try
+            {
+                using (var cn = new DB2Connection(_cs))
+                {
+                    await cn.OpenAsync();
+
+                    const string sql = @"
+                SELECT
+                    s.id,
+                    s.tipo,
+                    s.cargo_requerido,
+                    s.jefe_inmediato,
+                    s.ciudad_trabajo,
+                    s.fecha_solicitud,
+                    s.estado,
+                    s.id_solicitante
+                FROM solicitudes_aprobaciones_personal s
+                WHERE TRIM(UPPER(s.estado)) = 'EN VP GH'
+                  AND EXISTS (
+                        SELECT 1
+                        FROM requisiciones_aprobaciones_personal r
+                        WHERE TRIM(r.identificacion) = ?
+                          AND (
+                                TRIM(UPPER(r.cargo)) = 'VICEPRESIDENTE DE GESTION HUMANA'
+                             OR TRIM(UPPER(r.area)) = 'VP GESTION HUMANA'
+                          )
+                  )
+                ORDER BY s.fecha_solicitud DESC";
+
+                    using (var cmd = cn.CreateCommand())
+                    {
+                        cmd.CommandText = sql;
+                        cmd.Parameters.Add(new DB2Parameter { Value = identificacion });
+
+                        using var r = await cmd.ExecuteReaderAsync();
+                        while (await r.ReadAsync())
+                        {
+                            resultados.Add(new
+                            {
+                                Id = r["id"]?.ToString()?.Trim(),
+                                Tipo = r["tipo"]?.ToString()?.Trim(),
+                                CargoRequerido = r["cargo_requerido"]?.ToString()?.Trim(),
+                                JefeInmediato = r["jefe_inmediato"]?.ToString()?.Trim(),
+                                CiudadTrabajo = r["ciudad_trabajo"]?.ToString()?.Trim(),
+                                FechaSolicitud = r["fecha_solicitud"]?.ToString()?.Trim(),
+                                Estado = r["estado"]?.ToString()?.Trim(),
+                                IdSolicitante = r["id_solicitante"]?.ToString()?.Trim()
+                            });
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[GetSolicitudesVpGhAsync] Error: {ex.Message}");
+            }
+
+            return resultados;
+        }
 
     }
 }
