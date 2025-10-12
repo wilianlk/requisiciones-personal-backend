@@ -76,18 +76,26 @@ pipeline {
             )
 
             // ?? Notificación a Jira
-            jiraAddComment(
-                site: 'Recamier Jira',
-                issueKey: 'AB-12',
-                comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
-            )
+            script {
+                echo "?? Enviando comentario de éxito a Jira..."
+                try {
+                    jiraAddComment(
+                        site: 'Recamier Jira',
+                        issueKey: 'AB-12',
+                        comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
+                    )
+                    echo "? Comentario enviado correctamente a Jira (AB-12)."
 
-            // ?? Cambio automático de estado en Jira
-            jiraTransitionIssue(
-                site: 'Recamier Jira',
-                issueKey: 'AB-12',
-                transition: [name: 'En pruebas']
-            )
+                    jiraTransitionIssue(
+                        site: 'Recamier Jira',
+                        issueKey: 'AB-12',
+                        transition: [name: 'En pruebas']
+                    )
+                    echo "?? Estado del issue AB-12 cambiado a 'En pruebas'."
+                } catch (err) {
+                    echo "? Error al interactuar con Jira: ${err}"
+                }
+            }
         }
 
         failure {
@@ -109,11 +117,19 @@ pipeline {
             )
 
             // ?? Notificación a Jira en caso de error
-            jiraAddComment(
-                site: 'Recamier Jira',
-                issueKey: 'AB-12',
-                comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
-            )
+            script {
+                echo "?? Enviando comentario de error a Jira..."
+                try {
+                    jiraAddComment(
+                        site: 'Recamier Jira',
+                        issueKey: 'AB-12',
+                        comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
+                    )
+                    echo "? Comentario de error enviado correctamente a Jira (AB-12)."
+                } catch (err) {
+                    echo "? Error al intentar enviar comentario de error a Jira: ${err}"
+                }
+            }
         }
     }
 }
