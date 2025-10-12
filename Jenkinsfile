@@ -78,14 +78,14 @@ pipeline {
             // ?? Notificación a Jira
             jiraAddComment(
                 site: 'Recamier Jira',
-                issueKey: 'GES-34',
-                comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}"
+                issueKey: 'AB-12',
+                comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
             )
 
             // ?? Cambio automático de estado en Jira
             jiraTransitionIssue(
                 site: 'Recamier Jira',
-                issueKey: 'GES-34',
+                issueKey: 'AB-12',
                 transition: [name: 'En pruebas']
             )
         }
@@ -111,8 +111,8 @@ pipeline {
             // ?? Notificación a Jira en caso de error
             jiraAddComment(
                 site: 'Recamier Jira',
-                issueKey: 'GES-34',
-                comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}"
+                issueKey: 'AB-12',
+                comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
             )
         }
     }
