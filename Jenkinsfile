@@ -60,7 +60,11 @@ pipeline {
         success {
             echo '?? Build y despliegue completados con éxito.'
             emailext(
-                subject: "? Despliegue exitoso en KSCSERVER",
+                from: 'anticipos@rocket.recamier.com',
+                replyTo: 'anticipos@rocket.recamier.com',
+                subject: '? Despliegue exitoso en KSCSERVER',
+                to: 'wlucumi@recamier.com',
+                mimeType: 'text/html',
                 body: """
                     <h2 style="color:#28a745;">? Despliegue completado correctamente</h2>
                     <p>El proyecto <b>BackendRequisicionPersonal</b> fue compilado y desplegado exitosamente en el servidor <b>KSCSERVER</b>.</p>
@@ -69,15 +73,21 @@ pipeline {
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
-                to: "wlucumi@recamier.com",
-                mimeType: 'text/html'
+                additionalHeaders: [
+                    'Reply-To: anticipos@rocket.recamier.com',
+                    'Return-Path: anticipos@rocket.recamier.com'
+                ]
             )
         }
 
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
             emailext(
-                subject: "? Fallo en el despliegue de BackendRequisicionPersonal",
+                from: 'anticipos@rocket.recamier.com',
+                replyTo: 'anticipos@rocket.recamier.com',
+                subject: '? Fallo en el despliegue de BackendRequisicionPersonal',
+                to: 'wlucumi@recamier.com',
+                mimeType: 'text/html',
                 body: """
                     <h2 style="color:#dc3545;">? Error durante la publicación</h2>
                     <p>El proceso de build o despliegue no se completó correctamente.</p>
@@ -86,8 +96,10 @@ pipeline {
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
-                to: "wlucumi@recamier.com",
-                mimeType: 'text/html'
+                additionalHeaders: [
+                    'Reply-To: anticipos@rocket.recamier.com',
+                    'Return-Path: anticipos@rocket.recamier.com'
+                ]
             )
         }
     }
