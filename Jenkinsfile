@@ -60,6 +60,7 @@ pipeline {
         success {
             echo '?? Build y despliegue completados con éxito.'
             emailext(
+                from: "anticipos@rocket.recamier.com",
                 subject: "? Despliegue exitoso en KSCSERVER",
                 body: """
                     <h2 style="color:#28a745;">? Despliegue completado correctamente</h2>
@@ -77,6 +78,7 @@ pipeline {
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
             emailext(
+                from: "anticipos@rocket.recamier.com",
                 subject: "? Fallo en el despliegue de BackendRequisicionPersonal",
                 body: """
                     <h2 style="color:#dc3545;">? Error durante la publicación</h2>
