@@ -4,7 +4,8 @@ pipeline {
     stages {
         stage('Clonar repositorio') {
             steps {
-                echo 'Repositorio clonado correctamente.'
+                echo '?? Clonando el repositorio...'
+                // Jenkins hace el clone automáticamente según la configuración del job
             }
         }
 
@@ -23,38 +24,38 @@ pipeline {
         stage('Publicar artefactos') {
             steps {
                 bat 'dotnet publish BackendRequisicionPersonal.csproj -c Release -o ./publish'
-                echo 'Publicación completada exitosamente.'
+                echo '? Publicación completada exitosamente.'
             }
         }
 
         stage('Desplegar remoto por SSH') {
             steps {
-                echo 'Conectando al servidor remoto KSCSERVER...'
+                echo '?? Conectando al servidor remoto KSCSERVER...'
                 sshPublisher(publishers: [
                     sshPublisherDesc(
-                        configName: 'KSCSERVER',           // Nombre configurado en Publish over SSH
+                        configName: 'KSCSERVER', // nombre configurado en Publish over SSH
                         transfers: [
                             sshTransfer(
-                                sourceFiles: 'publish/**',   // Carpeta local generada por dotnet publish
-                                removePrefix: 'publish',     // Evita duplicar la ruta al copiar
-                                remoteDirectory: 'C:\\inetpub\\wwwroot\\RequisicionPersonal', // Ruta IIS destino
-                                execCommand: 'iisreset'      // Reinicia IIS al finalizar
+                                sourceFiles: 'publish/**', // publica todo lo generado
+                                removePrefix: 'publish',   // evita duplicar la ruta
+                                remoteDirectory: '/C:/Users/admcliente/Documents/jenkins_deploy', // carpeta remota
+                                execCommand: '' // no reinicia nada, solo copia
                             )
                         ],
                         verbose: true
                     )
                 ])
-                echo '?? Despliegue remoto completado exitosamente.'
+                echo '?? Archivos copiados correctamente al servidor remoto.'
             }
         }
     }
 
     post {
         success {
-            echo '? Build y despliegue completados con éxito.'
+            echo '?? Build y despliegue completados con éxito en C:\\Users\\admcliente\\Documents\\jenkins_deploy.'
         }
         failure {
-            echo '? El proceso falló. Revisa los logs en la consola de Jenkins.'
+            echo '? El proceso falló. Revisa los logs de Jenkins.'
         }
     }
 }
