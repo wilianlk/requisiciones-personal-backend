@@ -77,22 +77,23 @@ pipeline {
                 """
             )
 
-            // ?? Notificación y transición en Jira (fuera de script)
+            // ?? Notificación y transición en Jira (versión correcta)
             echo '?? Enviando comentario de éxito a Jira...'
             jiraAddComment(
                 site: 'Recamier Jira',
-                issueKey: 'AB-12',
+                idOrKey: 'AB-12',
                 comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
             )
             echo '? Comentario agregado correctamente en Jira (AB-12).'
 
-            echo '?? Cambiando estado del issue AB-12 a “En pruebas”...'
+            // ?? Cambio automático de estado
+            echo '?? Cambiando estado del issue AB-12...'
             jiraTransitionIssue(
                 site: 'Recamier Jira',
-                issueKey: 'AB-12',
-                transition: [name: 'En pruebas']
+                idOrKey: 'AB-12',
+                transitionId: '31'  // ?? reemplaza este ID por el correcto (te explico abajo)
             )
-            echo '? Estado del issue cambiado correctamente a “En pruebas”.'
+            echo '? Estado del issue cambiado correctamente en Jira.'
         }
 
         failure {
@@ -119,7 +120,7 @@ pipeline {
             echo '?? Enviando notificación de error a Jira...'
             jiraAddComment(
                 site: 'Recamier Jira',
-                issueKey: 'AB-12',
+                idOrKey: 'AB-12',
                 comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
             )
             echo '? Comentario de error agregado correctamente en Jira (AB-12).'
