@@ -60,7 +60,7 @@ pipeline {
         success {
             echo '?? Build y despliegue completados con éxito.'
 
-            // ?? Enviar correo de éxito
+            // ?? Envío de notificación por correo
             emailext(
                 from: 'anticipos@rocket.recamier.com',
                 replyTo: 'anticipos@rocket.recamier.com',
@@ -77,29 +77,39 @@ pipeline {
                 """
             )
 
-            // ?? Notificación y transición en Jira (versión correcta)
-            echo '?? Enviando comentario de éxito a Jira...'
-            jiraAddComment(
-                site: 'Recamier Jira',
-                idOrKey: 'AB-12',
-                comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
-            )
-            echo '? Comentario agregado correctamente en Jira (AB-12).'
+            // ?? Notificación a Jira
+            script {
+                echo '?? Enviando comentario de éxito a Jira...'
+                try {
+                    jiraAddComment(
+                        site: 'Recamier Jira',
+                        idOrKey: 'AB-12',
+                        comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
+                    )
+                    echo '? Comentario agregado correctamente en Jira (AB-12).'
+                } catch (Exception e) {
+                    echo "?? No se pudo enviar el comentario a Jira: ${e.message}"
+                }
 
-            // ?? Cambio automático de estado
-            echo '?? Cambiando estado del issue AB-12...'
-            jiraTransitionIssue(
-                site: 'Recamier Jira',
-                idOrKey: 'AB-12',
-                transitionId: '31'  // ?? reemplaza este ID por el correcto (te explico abajo)
-            )
-            echo '? Estado del issue cambiado correctamente en Jira.'
+                // ?? Cambio de estado automático en Jira
+                echo '?? Cambiando estado del issue AB-12 a “En pruebas”...'
+                try {
+                    jiraTransitionIssue(
+                        site: 'Recamier Jira',
+                        idOrKey: 'AB-12',
+                        transition: [name: 'En pruebas']   // ?? compatible con tu versión
+                    )
+                    echo '? Estado del issue cambiado correctamente a “En pruebas”.'
+                } catch (Exception e) {
+                    echo "?? No se pudo cambiar el estado del issue en Jira: ${e.message}"
+                }
+            }
         }
 
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
 
-            // ?? Enviar correo de fallo
+            // ?? Notificación de error
             emailext(
                 from: 'anticipos@rocket.recamier.com',
                 replyTo: 'anticipos@rocket.recamier.com',
@@ -116,14 +126,20 @@ pipeline {
                 """
             )
 
-            // ?? Notificación de error a Jira
-            echo '?? Enviando notificación de error a Jira...'
-            jiraAddComment(
-                site: 'Recamier Jira',
-                idOrKey: 'AB-12',
-                comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
-            )
-            echo '? Comentario de error agregado correctamente en Jira (AB-12).'
+            // ?? Notificación de error en Jira
+            script {
+                echo '?? Notificando fallo a Jira...'
+                try {
+                    jiraAddComment(
+                        site: 'Recamier Jira',
+                        idOrKey: 'AB-12',
+                        comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}<br>Fecha: ${new Date()}"
+                    )
+                    echo '? Comentario de error agregado correctamente en Jira (AB-12).'
+                } catch (Exception e) {
+                    echo "?? No se pudo notificar el error en Jira: ${e.message}"
+                }
+            }
         }
     }
 }
