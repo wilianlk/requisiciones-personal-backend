@@ -5,7 +5,6 @@ pipeline {
         stage('Clonar repositorio') {
             steps {
                 echo '?? Clonando el repositorio...'
-                // Jenkins realiza automáticamente el clone según la configuración del job
             }
         }
 
@@ -62,8 +61,8 @@ pipeline {
             emailext(
                 from: 'anticipos@rocket.recamier.com',
                 replyTo: 'anticipos@rocket.recamier.com',
-                subject: '? Despliegue exitoso en KSCSERVER',
                 to: 'wlucumi@recamier.com',
+                subject: '? Despliegue exitoso en KSCSERVER',
                 mimeType: 'text/html',
                 body: """
                     <h2 style="color:#28a745;">? Despliegue completado correctamente</h2>
@@ -72,11 +71,7 @@ pipeline {
                     <p><b>Fecha y hora:</b> ${new Date()}</p>
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
-                """,
-                headers: [
-                    'Reply-To=anticipos@rocket.recamier.com',
-                    'Return-Path=anticipos@rocket.recamier.com'
-                ]
+                """
             )
         }
 
@@ -85,8 +80,8 @@ pipeline {
             emailext(
                 from: 'anticipos@rocket.recamier.com',
                 replyTo: 'anticipos@rocket.recamier.com',
-                subject: '? Fallo en el despliegue de BackendRequisicionPersonal',
                 to: 'wlucumi@recamier.com',
+                subject: '? Fallo en el despliegue de BackendRequisicionPersonal',
                 mimeType: 'text/html',
                 body: """
                     <h2 style="color:#dc3545;">? Error durante la publicación</h2>
@@ -95,11 +90,7 @@ pipeline {
                     <p><b>Fecha y hora:</b> ${new Date()}</p>
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
-                """,
-                headers: [
-                    'Reply-To=anticipos@rocket.recamier.com',
-                    'Return-Path=anticipos@rocket.recamier.com'
-                ]
+                """
             )
         }
     }
