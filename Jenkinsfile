@@ -36,10 +36,10 @@ pipeline {
                         configName: 'KSCSERVER', // nombre configurado en Publish over SSH
                         transfers: [
                             sshTransfer(
-                                sourceFiles: 'publish/**', // publica todo lo generado
-                                removePrefix: 'publish',   // evita duplicar la ruta
-                                remoteDirectory: '/C:/Users/admcliente/Documents/jenkins_deploy', // carpeta remota
-                                execCommand: '' // no reinicia nada, solo copia
+                                sourceFiles: 'publish/**',      // publica todo lo generado
+                                removePrefix: 'publish',        // evita duplicar la ruta
+                                remoteDirectory: 'Documents/jenkins_deploy', // carpeta remota relativa al usuario admcliente
+                                execCommand: ''                 // sin comandos adicionales
                             )
                         ],
                         verbose: true
