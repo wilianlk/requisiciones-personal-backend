@@ -50,15 +50,15 @@ pipeline {
                                         removePrefix: '',
                                         remoteDirectory: 'Documents/jenkins_deploy',
                                         execCommand: """
-                                            powershell Expand-Archive -Force Documents/jenkins_deploy/${env.ARTIFACT_NAME} Documents/jenkins_deploy/
-                                            del Documents/jenkins_deploy/${env.ARTIFACT_NAME}
+                                            powershell Expand-Archive -Force ${env.ARTIFACT_NAME} .
+                                            del ${env.ARTIFACT_NAME}
                                         """
                                     )
                                 ],
                                 verbose: true
                             )
                         ])
-                        echo '?? Despliegue completado correctamente.'
+                        echo '?? Despliegue completado correctamente en KSCSERVER.'
                         currentBuild.result = 'SUCCESS'
                     } catch (Exception e) {
                         echo "?? Error durante el despliegue SSH: ${e.message}"
@@ -127,6 +127,17 @@ pipeline {
                 } catch (Exception e) {
                     echo "?? No se pudo cambiar el estado del issue en Jira: ${e.message}"
                 }
+            }
+
+            // ?? Limpieza automática de artefactos viejos (mantiene solo los últimos 5)
+            script {
+                echo '?? Limpiando artefactos antiguos...'
+                dir("${env.WORKSPACE}") {
+                    bat '''
+                        for /f "skip=5 delims=" %%A in ('dir /b /o-d BackendRequisicionPersonal_*.zip 2^>nul') do del "%%A"
+                    '''
+                }
+                echo '?? Limpieza completada.'
             }
         }
 
