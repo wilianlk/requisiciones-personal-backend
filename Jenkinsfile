@@ -5,6 +5,7 @@ pipeline {
         stage('Clonar repositorio') {
             steps {
                 echo '?? Clonando el repositorio...'
+                checkout scm
             }
         }
 
@@ -73,6 +74,20 @@ pipeline {
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """
             )
+
+            // ?? Notificación a Jira
+            jiraAddComment(
+                site: 'Recamier Jira',
+                issueKey: 'GES-34',
+                comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}"
+            )
+
+            // ?? Cambio automático de estado en Jira
+            jiraTransitionIssue(
+                site: 'Recamier Jira',
+                issueKey: 'GES-34',
+                transition: [name: 'En pruebas']
+            )
         }
 
         failure {
@@ -91,6 +106,13 @@ pipeline {
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """
+            )
+
+            // ?? Notificación a Jira en caso de error
+            jiraAddComment(
+                site: 'Recamier Jira',
+                issueKey: 'GES-34',
+                comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br>Build #${env.BUILD_NUMBER}<br>URL: ${env.BUILD_URL}"
             )
         }
     }
