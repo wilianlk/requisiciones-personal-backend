@@ -5,6 +5,7 @@ pipeline {
         stage('Clonar repositorio') {
             steps {
                 echo '?? Clonando el repositorio...'
+                // Jenkins realiza automáticamente el clone según la configuración del job
             }
         }
 
@@ -30,21 +31,27 @@ pipeline {
         stage('Desplegar remoto por SSH') {
             steps {
                 echo '?? Conectando al servidor remoto KSCSERVER...'
-                sshPublisher(publishers: [
-                    sshPublisherDesc(
-                        configName: 'KSCSERVER',
-                        transfers: [
-                            sshTransfer(
-                                sourceFiles: 'publish/**',
-                                removePrefix: 'publish',
-                                remoteDirectory: 'Documents/jenkins_deploy',
-                                execCommand: ''
+                script {
+                    try {
+                        sshPublisher(publishers: [
+                            sshPublisherDesc(
+                                configName: 'KSCSERVER',
+                                transfers: [
+                                    sshTransfer(
+                                        sourceFiles: 'publish/**',
+                                        removePrefix: 'publish',
+                                        remoteDirectory: 'Documents/jenkins_deploy',
+                                        execCommand: ''
+                                    )
+                                ],
+                                verbose: true
                             )
-                        ],
-                        verbose: true
-                    )
-                ])
-                echo '?? Archivos copiados correctamente al servidor remoto.'
+                        ])
+                        echo '?? Archivos copiados correctamente al servidor remoto.'
+                    } catch (Exception e) {
+                        error "? Error durante el despliegue remoto: ${e.message}"
+                    }
+                }
             }
         }
     }
@@ -52,27 +59,32 @@ pipeline {
     post {
         success {
             echo '?? Build y despliegue completados con éxito.'
-            emailext (
+            emailext(
                 subject: "? Despliegue exitoso en KSCSERVER",
                 body: """
-                <h3>Publicación completada correctamente</h3>
-                <p>El proyecto <b>BackendRequisicionPersonal</b> fue compilado y desplegado exitosamente en el servidor <b>KSCSERVER</b>.</p>
-                <p><b>Ruta de despliegue:</b> C:\\Users\\admcliente\\Documents\\jenkins_deploy</p>
-                <p><b>Fecha y hora:</b> ${new Date()}</p>
-                <p>Revisa Jenkins para más detalles del build.</p>
+                    <h2 style="color:#28a745;">? Despliegue completado correctamente</h2>
+                    <p>El proyecto <b>BackendRequisicionPersonal</b> fue compilado y desplegado exitosamente en el servidor <b>KSCSERVER</b>.</p>
+                    <p><b>Ruta de despliegue:</b> C:\\Users\\admcliente\\Documents\\jenkins_deploy</p>
+                    <p><b>Fecha y hora:</b> ${new Date()}</p>
+                    <hr>
+                    <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
                 to: "wlucumi@recamier.com",
                 mimeType: 'text/html'
             )
         }
+
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
-            emailext (
+            emailext(
                 subject: "? Fallo en el despliegue de BackendRequisicionPersonal",
                 body: """
-                <h3>El proceso de publicación falló</h3>
-                <p>Revisa la consola de Jenkins para más detalles.</p>
-                <p><b>Fecha y hora:</b> ${new Date()}</p>
+                    <h2 style="color:#dc3545;">? Error durante la publicación</h2>
+                    <p>El proceso de build o despliegue no se completó correctamente.</p>
+                    <p>Revisa la consola de Jenkins para más detalles del error.</p>
+                    <p><b>Fecha y hora:</b> ${new Date()}</p>
+                    <hr>
+                    <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
                 to: "wlucumi@recamier.com",
                 mimeType: 'text/html'
