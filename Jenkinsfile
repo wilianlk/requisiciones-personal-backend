@@ -73,9 +73,9 @@ pipeline {
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
-                additionalHeaders: [
-                    'Reply-To: anticipos@rocket.recamier.com',
-                    'Return-Path: anticipos@rocket.recamier.com'
+                headers: [
+                    'Reply-To=anticipos@rocket.recamier.com',
+                    'Return-Path=anticipos@rocket.recamier.com'
                 ]
             )
         }
@@ -96,9 +96,9 @@ pipeline {
                     <hr>
                     <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
                 """,
-                additionalHeaders: [
-                    'Reply-To: anticipos@rocket.recamier.com',
-                    'Return-Path: anticipos@rocket.recamier.com'
+                headers: [
+                    'Reply-To=anticipos@rocket.recamier.com',
+                    'Return-Path=anticipos@rocket.recamier.com'
                 ]
             )
         }
