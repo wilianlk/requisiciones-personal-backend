@@ -5,7 +5,6 @@ pipeline {
         stage('Clonar repositorio') {
             steps {
                 echo '?? Clonando el repositorio...'
-                // Jenkins hace el clone automáticamente según la configuración del job
             }
         }
 
@@ -33,13 +32,13 @@ pipeline {
                 echo '?? Conectando al servidor remoto KSCSERVER...'
                 sshPublisher(publishers: [
                     sshPublisherDesc(
-                        configName: 'KSCSERVER', // nombre configurado en Publish over SSH
+                        configName: 'KSCSERVER',
                         transfers: [
                             sshTransfer(
-                                sourceFiles: 'publish/**',      // publica todo lo generado
-                                removePrefix: 'publish',        // evita duplicar la ruta
-                                remoteDirectory: 'Documents/jenkins_deploy', // carpeta remota relativa al usuario admcliente
-                                execCommand: ''                 // sin comandos adicionales
+                                sourceFiles: 'publish/**',
+                                removePrefix: 'publish',
+                                remoteDirectory: 'Documents/jenkins_deploy',
+                                execCommand: ''
                             )
                         ],
                         verbose: true
@@ -52,10 +51,32 @@ pipeline {
 
     post {
         success {
-            echo '?? Build y despliegue completados con éxito en C:\\Users\\admcliente\\Documents\\jenkins_deploy.'
+            echo '?? Build y despliegue completados con éxito.'
+            emailext (
+                subject: "? Despliegue exitoso en KSCSERVER",
+                body: """
+                <h3>Publicación completada correctamente</h3>
+                <p>El proyecto <b>BackendRequisicionPersonal</b> fue compilado y desplegado exitosamente en el servidor <b>KSCSERVER</b>.</p>
+                <p><b>Ruta de despliegue:</b> C:\\Users\\admcliente\\Documents\\jenkins_deploy</p>
+                <p><b>Fecha y hora:</b> ${new Date()}</p>
+                <p>Revisa Jenkins para más detalles del build.</p>
+                """,
+                to: "wlucumi@recamier.com",
+                mimeType: 'text/html'
+            )
         }
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
+            emailext (
+                subject: "? Fallo en el despliegue de BackendRequisicionPersonal",
+                body: """
+                <h3>El proceso de publicación falló</h3>
+                <p>Revisa la consola de Jenkins para más detalles.</p>
+                <p><b>Fecha y hora:</b> ${new Date()}</p>
+                """,
+                to: "wlucumi@recamier.com",
+                mimeType: 'text/html'
+            )
         }
     }
 }
