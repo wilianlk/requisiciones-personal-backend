@@ -92,14 +92,18 @@ pipeline {
                 }
 
                 // ?? Cambio de estado automático en Jira
-                echo '?? Cambiando estado del issue AB-12 a “En pruebas”...'
+                echo '?? Cambiando estado del issue AB-12 a “Pruebas”...'
                 try {
                     jiraTransitionIssue(
                         site: 'Recamier Jira',
                         idOrKey: 'AB-12',
-                        transition: [name: 'En pruebas']   // ?? compatible con tu versión
+                        input: [
+                            transition: [
+                                id: '42' // ? ID confirmado para "Pruebas"
+                            ]
+                        ]
                     )
-                    echo '? Estado del issue cambiado correctamente a “En pruebas”.'
+                    echo '? Estado del issue cambiado correctamente a “Pruebas”.'
                 } catch (Exception e) {
                     echo "?? No se pudo cambiar el estado del issue en Jira: ${e.message}"
                 }
