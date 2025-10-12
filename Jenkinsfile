@@ -1,11 +1,24 @@
 pipeline {
     agent any
 
+    // Puedes dejar solo esto en environment; el resto lo calculo en una etapa
     environment {
-        ARTIFACT_NAME = "BackendRequisicionPersonal_${env.BUILD_NUMBER}.zip"
+        ARTIFACT_NAME = "BackendRequisicionPersonal_${BUILD_NUMBER}.zip"
     }
 
     stages {
+
+        stage('Preparar variables') {
+            steps {
+                script {
+                    // Fecha legible y ruta de despliegue por build
+                    env.DATE_TAG  = new Date().format("yyyyMMdd_HHmmss")
+                    env.DEPLOY_DIR = "Documents/jenkins_deploy/build_${env.BUILD_NUMBER}_${env.DATE_TAG}"
+                    echo "?? DEPLOY_DIR = ${env.DEPLOY_DIR}"
+                    echo "?? ARTIFACT_NAME = ${env.ARTIFACT_NAME}"
+                }
+            }
+        }
 
         stage('Clonar repositorio') {
             steps {
@@ -26,19 +39,23 @@ pipeline {
             }
         }
 
-        stage('Publicar artefactos') {
+        stage('Publicar artefacto ZIP') {
             steps {
-                echo '??? Generando artefacto comprimido...'
-                bat 'dotnet publish BackendRequisicionPersonal.csproj -c Release -o ./publish'
-                bat "powershell Compress-Archive -Path publish\\* -DestinationPath ${env.ARTIFACT_NAME}"
+                echo '??? Publicando artefactos...'
+                // Asegura un publish limpio del proyecto
+                bat 'if exist publish rmdir /s /q publish'
+                bat 'dotnet publish BackendRequisicionPersonal.csproj -c Release -o publish'
+                // ZIP plano (sin rutas absolutas)
+                bat "powershell -NoProfile -Command \"Compress-Archive -Path publish\\* -DestinationPath ${env.ARTIFACT_NAME} -Force\""
+                // Guarda el artefacto en Jenkins (auditoría)
                 archiveArtifacts artifacts: "${env.ARTIFACT_NAME}", fingerprint: true
                 echo "? Artefacto archivado: ${env.ARTIFACT_NAME}"
             }
         }
 
-        stage('Desplegar remoto por SSH') {
+        stage('Desplegar en KSCSERVER por SSH') {
             steps {
-                echo '?? Iniciando despliegue remoto en KSCSERVER...'
+                echo "?? Desplegando en KSCSERVER -> ${env.DEPLOY_DIR}"
                 script {
                     try {
                         sshPublisher(publishers: [
@@ -46,25 +63,24 @@ pipeline {
                                 configName: 'KSCSERVER',
                                 transfers: [
                                     sshTransfer(
+                                        // Enviamos solo el ZIP
                                         sourceFiles: "${env.ARTIFACT_NAME}",
                                         removePrefix: '',
-                                        remoteDirectory: 'Documents/jenkins_deploy',
+                                        // ?? Creamos carpeta del build y trabajamos DENTRO de ella
+                                        remoteDirectory: "${env.DEPLOY_DIR}",
+                                        // Descomprime en la carpeta actual y borra el ZIP (sin duplicar rutas)
                                         execCommand: """
-                                            powershell Expand-Archive -Force ${env.ARTIFACT_NAME} .
-                                            del ${env.ARTIFACT_NAME}
+                                            powershell -NoProfile -Command "Expand-Archive -Force ${env.ARTIFACT_NAME} . ; Remove-Item -Force ${env.ARTIFACT_NAME}"
                                         """
                                     )
                                 ],
                                 verbose: true
                             )
                         ])
-                        echo '?? Despliegue completado correctamente en KSCSERVER.'
+                        echo "?? Despliegue completado en: ${env.DEPLOY_DIR}"
                         currentBuild.result = 'SUCCESS'
                     } catch (Exception e) {
-                        echo "?? Error durante el despliegue SSH: ${e.message}"
-                        currentBuild.result = 'FAILURE'
-                    } finally {
-                        echo '?? Etapa SSH finalizada.'
+                        error "? Error en despliegue SSH: ${e.message}"
                     }
                 }
             }
@@ -72,106 +88,95 @@ pipeline {
     }
 
     post {
-        always {
-            echo '?? Bloque POST ejecutado (éxito o fallo).'
-        }
 
         success {
             echo '?? Build y despliegue completados con éxito.'
 
-            // ?? Envío de notificación por correo
+            // ?? Correo de éxito
             emailext(
                 from: 'anticipos@rocket.recamier.com',
-                replyTo: 'anticipos@rocket.recamier.com',
                 to: 'wlucumi@recamier.com',
                 subject: "? Despliegue exitoso en KSCSERVER (Build #${env.BUILD_NUMBER})",
                 mimeType: 'text/html',
                 body: """
-                    <h2 style="color:#28a745;">? Despliegue completado correctamente</h2>
-                    <p>El proyecto <b>BackendRequisicionPersonal</b> fue compilado y desplegado exitosamente en el servidor <b>KSCSERVER</b>.</p>
-                    <p><b>Ruta de despliegue:</b> C:\\Users\\admcliente\\Documents\\jenkins_deploy</p>
+                    <h2 style='color:#28a745;'>? Despliegue exitoso</h2>
+                    <p><b>Proyecto:</b> BackendRequisicionPersonal</p>
+                    <p><b>Servidor:</b> KSCSERVER</p>
+                    <p><b>Ruta:</b> <code>${env.DEPLOY_DIR}</code></p>
                     <p><b>Build:</b> #${env.BUILD_NUMBER}</p>
-                    <p><b>Fecha y hora:</b> ${new Date()}</p>
+                    <p><b>Fecha:</b> ${new Date()}</p>
                     <hr>
-                    <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
+                    <small>Mensaje automático Jenkins CI/CD</small>
                 """
             )
 
-            // ?? Notificación a Jira
+            // ?? Jira: comentario + transición a "Pruebas" (ID 42)
             script {
-                echo '?? Enviando comentario de éxito a Jira...'
+                echo '?? Notificando a Jira...'
                 try {
                     jiraAddComment(
                         site: 'Recamier Jira',
                         idOrKey: 'AB-12',
-                        comment: "? Despliegue exitoso del proyecto BackendRequisicionPersonal en KSCSERVER.<br><b>Build:</b> #${env.BUILD_NUMBER}<br><b>URL:</b> ${env.BUILD_URL}<br><b>Fecha:</b> ${new Date()}"
+                        comment: """
+                            ? Despliegue exitoso del proyecto BackendRequisicionPersonal.<br>
+                            ?? Build: #${env.BUILD_NUMBER}<br>
+                            ?? Fecha: ${new Date()}<br>
+                            ?? Ruta: ${env.DEPLOY_DIR}<br>
+                            ?? URL: ${env.BUILD_URL}
+                        """
                     )
-                    echo '? Comentario agregado correctamente en Jira (AB-12).'
+                    echo '?? Comentario agregado en Jira.'
                 } catch (Exception e) {
-                    echo "?? No se pudo enviar el comentario a Jira: ${e.message}"
+                    echo "?? No se pudo comentar en Jira: ${e.message}"
                 }
 
-                // ?? Cambio de estado automático en Jira
-                echo '?? Cambiando estado del issue AB-12 a “Pruebas”...'
                 try {
+                    echo '?? Cambiando estado del issue AB-12 a “Pruebas”...'
                     jiraTransitionIssue(
                         site: 'Recamier Jira',
                         idOrKey: 'AB-12',
-                        input: [
-                            transition: [
-                                id: '42' // ? ID correcto para "Pruebas"
-                            ]
-                        ]
+                        input: [ transition: [ id: '42' ] ]   // ID confirmado para "Pruebas"
                     )
-                    echo '? Estado del issue cambiado correctamente a “Pruebas”.'
+                    echo '? Estado actualizado en Jira.'
                 } catch (Exception e) {
-                    echo "?? No se pudo cambiar el estado del issue en Jira: ${e.message}"
+                    echo "?? No se pudo transicionar el issue en Jira: ${e.message}"
                 }
-            }
-
-            // ?? Limpieza automática de artefactos viejos (mantiene solo los últimos 5)
-            script {
-                echo '?? Limpiando artefactos antiguos...'
-                dir("${env.WORKSPACE}") {
-                    bat '''
-                        for /f "skip=5 delims=" %%A in ('dir /b /o-d BackendRequisicionPersonal_*.zip 2^>nul') do del "%%A"
-                    '''
-                }
-                echo '?? Limpieza completada.'
             }
         }
 
         failure {
             echo '? El proceso falló. Revisa los logs de Jenkins.'
 
-            // ?? Notificación de error
+            // ?? Correo de error
             emailext(
                 from: 'anticipos@rocket.recamier.com',
-                replyTo: 'anticipos@rocket.recamier.com',
                 to: 'wlucumi@recamier.com',
-                subject: "? Fallo en el despliegue de BackendRequisicionPersonal (Build #${env.BUILD_NUMBER})",
+                subject: "? Fallo en el despliegue (Build #${env.BUILD_NUMBER})",
                 mimeType: 'text/html',
                 body: """
-                    <h2 style="color:#dc3545;">? Error durante la publicación</h2>
+                    <h2 style='color:#dc3545;'>? Error durante la publicación</h2>
                     <p>El proceso de build o despliegue no se completó correctamente.</p>
-                    <p>Revisa la consola de Jenkins para más detalles del error.</p>
                     <p><b>Build:</b> #${env.BUILD_NUMBER}</p>
-                    <p><b>Fecha y hora:</b> ${new Date()}</p>
+                    <p><b>Fecha:</b> ${new Date()}</p>
                     <hr>
-                    <p style="font-size:12px;color:gray;">Mensaje automático enviado por Jenkins CI/CD</p>
+                    <small>Mensaje automático Jenkins CI/CD</small>
                 """
             )
 
-            // ?? Notificación de error en Jira
+            // ?? Jira: comentario de fallo
             script {
-                echo '?? Notificando fallo a Jira...'
                 try {
                     jiraAddComment(
                         site: 'Recamier Jira',
                         idOrKey: 'AB-12',
-                        comment: "? Fallo en el despliegue del proyecto BackendRequisicionPersonal en KSCSERVER.<br><b>Build:</b> #${env.BUILD_NUMBER}<br><b>URL:</b> ${env.BUILD_URL}<br><b>Fecha:</b> ${new Date()}"
+                        comment: """
+                            ? Fallo en el despliegue del proyecto BackendRequisicionPersonal.<br>
+                            ?? Fecha: ${new Date()}<br>
+                            ?? Build: #${env.BUILD_NUMBER}<br>
+                            ?? URL: ${env.BUILD_URL}
+                        """
                     )
-                    echo '? Comentario de error agregado correctamente en Jira (AB-12).'
+                    echo '?? Comentario de error agregado en Jira.'
                 } catch (Exception e) {
                     echo "?? No se pudo notificar el error en Jira: ${e.message}"
                 }
