@@ -1394,6 +1394,7 @@ ORDER BY fecha_solicitud DESC";
         {
             var resultados = new List<dynamic>();
 
+
             try
             {
                 using (var cn = new DB2Connection(_cs))
