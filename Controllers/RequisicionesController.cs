@@ -79,10 +79,6 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  Insertar → EN REVISION POR GESTION GH
-         *  Correos: (1) solicitante (individual)  (2) GH con botones
-         * =========================================================== */
         [HttpPost("insertar")]
         public async Task<IActionResult> Insertar([FromBody] SolicitudPersonalDto dto)
         {
@@ -456,9 +452,6 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  VP GH: pasar a "EN VP GH" y notificar a VP GH (con botones)
-         * =========================================================== */
         [HttpPost("vpgh/enviar")]
         public async Task<IActionResult> EnviarAVpGh([FromQuery] int id)
         {
@@ -492,10 +485,6 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  VP GH: aprobar → "CERRADO"
-         *  Correos: separados a Nómina y GH (múltiples soportados)
-         * =========================================================== */
         [HttpPost("vpgh/aprobar")]
         public async Task<IActionResult> AprobarVpGhCerrar([FromQuery] int id)
         {
@@ -524,29 +513,19 @@ namespace BackendRequisicionPersonal.Controllers
                 return StatusCode(500, new { success = false, message = "Error interno" });
             }
         }
-
-        /* ===========================================================
-         *  Helpers: correos, SMTP, templates, URLs
-         * =========================================================== */
-
         private static string NormalizeEmail(string? s)
             => (s ?? "").Trim().ToLowerInvariant();
-
         private static List<string> DistinctNormalizedEmails(IEnumerable<string> emails)
             => emails
                 .Where(e => !string.IsNullOrWhiteSpace(e))
                 .Select(NormalizeEmail)
                 .Distinct()
                 .ToList();
-
         private IEnumerable<string> GetCorreosGestionHumana()
         {
-            // Mantiene compatibilidad con RRHH:CorreosRevision (array)
             var arr = _config.GetSection("RRHH:CorreosRevision").Get<string[]>() ?? Array.Empty<string>();
             return DistinctNormalizedEmails(arr);
         }
-
-        // 🔹 NUEVOS: lectura flexible (string "Correo" y/o array "Correos")
         private IEnumerable<string> GetCorreosVpGh()
         {
             var one = _config["VPGH:Correo"];
@@ -558,7 +537,6 @@ namespace BackendRequisicionPersonal.Controllers
             _logger.LogInformation("VPGH destinatarios: {To}", string.Join(", ", res));
             return res;
         }
-
         private IEnumerable<string> GetCorreosNomina()
         {
             var one = _config["Nomina:Correo"];
@@ -570,7 +548,6 @@ namespace BackendRequisicionPersonal.Controllers
             _logger.LogInformation("Nómina destinatarios: {To}", string.Join(", ", res));
             return res;
         }
-
         private IEnumerable<string> DestinatariosSolicitante(SolicitudPersonal sol)
         {
             // Si más adelante agregas correo del solicitante real, añádelo aquí.
@@ -579,7 +556,6 @@ namespace BackendRequisicionPersonal.Controllers
                 list.Add(sol.CorreoJefe);
             return DistinctNormalizedEmails(list);
         }
-
         private SmtpClient BuildSmtp()
         {
             return new SmtpClient(_smtp.Host, _smtp.Port)
@@ -590,13 +566,11 @@ namespace BackendRequisicionPersonal.Controllers
                 Credentials = new NetworkCredential(_smtp.User, _smtp.Pass)
             };
         }
-
         private void AddCcPowerApps(MailMessage mail)
         {
             foreach (var cc in _ccPowerApps)
                 mail.CC.Add(cc);
         }
-
         private static string EstadoTitulo(string? estado)
         {
             var e = (estado ?? "").Trim().ToUpperInvariant();
@@ -630,21 +604,13 @@ namespace BackendRequisicionPersonal.Controllers
                 _ => "-"
             };
         }
-
-        /* ===================== Helpers nuevos (deduplicación y tipo) ===================== */
-
-        // ¿Es tipo ADMINISTRATIVO?
         private static bool EsAdministrativo(SolicitudPersonal s)
             => string.Equals((s.Tipo ?? "").Trim(), "ADMINISTRATIVO", StringComparison.OrdinalIgnoreCase);
-
-        // Primer correo no vacío (Aprobador 1)
         private static string? FirstEmail(IEnumerable<string> correosRaw)
             => correosRaw?
                 .FirstOrDefault(c => !string.IsNullOrWhiteSpace(c))?
                 .Trim()
                 .ToLowerInvariant();
-
-        // Notifica al solicitante SOLO si su buzón NO coincide con algún aprobador (evita doble correo)
         private async Task NotificarSolicitanteSinDuplicarAprobadoresAsync(
             SolicitudPersonal sol,
             string estadoTitulo,
@@ -680,10 +646,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error en NotificarSolicitanteSinDuplicarAprobadoresAsync id={Id}: {Msg}", sol.Id, ex.Message);
             }
         }
-
-        /* ===================== ENVÍOS SMTP ===================== */
-
-        // --- Correos informativos al solicitante (siempre separado) ---
         private async Task EnviarCorreoEstadoSolicitanteAsync(SolicitudPersonal sol, string estadoTitulo)
         {
             try
@@ -706,7 +668,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correo solicitante ({Estado}) id={Id}: {Msg}", estadoTitulo, sol.Id, ex.Message);
             }
         }
-
         private async Task EnviarCorreoFinalSolicitanteAsync(SolicitudPersonal sol, bool aprobado, string? motivoRechazo = null)
         {
             try
@@ -730,8 +691,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correo final solicitante id={Id}: {Msg}", sol.Id, ex.Message);
             }
         }
-
-        // --- GH con botones (Revisión / Selección) ---
         private async Task EnviarCorreoGhConBotonesAsync(SolicitudPersonal sol, IEnumerable<string> destinatariosGh, string estadoTitulo)
         {
             try
@@ -752,8 +711,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correo GH con botones ({Estado}) id={Id}: {Msg}", estadoTitulo, sol.Id, ex.Message);
             }
         }
-
-        // --- Aprobador con botones (sin CC al solicitante) ---
         private async Task EnviarCorreoAprobadorAsync(SolicitudPersonal sol, string aprobadorEmail)
         {
             try
@@ -772,8 +729,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error enviando correo Aprobador a {To} (id={Id}): {Msg}", aprobadorEmail, sol.Id, ex.Message);
             }
         }
-
-        // --- VP GH con botones (uno o varios) ---
         private async Task EnviarCorreoVpGhConBotonesAsync(SolicitudPersonal sol, IEnumerable<string> destinatariosVpGh)
         {
             try
@@ -801,8 +756,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correo VP GH (id={Id}): {Msg}", sol.Id, ex.Message);
             }
         }
-
-        // --- Cierre: correos separados a Nómina (uno o varios) y GH ---
         private async Task EnviarCorreoCierreANominaYGhAsync(SolicitudPersonal sol)
         {
             try
@@ -845,7 +798,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correos de Cierre id={Id}: {Msg}", sol.Id, ex.Message);
             }
         }
-
         private MailMessage BaseMail(SolicitudPersonal s, string subject, string htmlBody)
         {
             return new MailMessage
@@ -856,9 +808,6 @@ namespace BackendRequisicionPersonal.Controllers
                 IsBodyHtml = true
             };
         }
-
-        /* ===================== Templates & URLs ===================== */
-
         private string ShellCorreo(string titulo, string contenidoHtml)
         {
             return $@"
@@ -872,7 +821,6 @@ namespace BackendRequisicionPersonal.Controllers
   </body>
 </html>";
         }
-
         private string EncabezadoBasico(SolicitudPersonal s)
         {
             string K(string v) => $"<td style='padding:6px;border:1px solid #ddd;width:36%;'><b>{WebUtility.HtmlEncode(v)}</b></td>";
@@ -894,8 +842,6 @@ namespace BackendRequisicionPersonal.Controllers
             sb.AppendLine("</table>");
             return sb.ToString();
         }
-
-        // Sección específica por tipo (campos alineados a tu UI)
         private string DetallePorTipo(SolicitudPersonal s)
         {
             string K(string v) => $"<td style='padding:6px;border:1px solid #ddd;width:36%;'><b>{WebUtility.HtmlEncode(v)}</b></td>";
@@ -942,7 +888,7 @@ namespace BackendRequisicionPersonal.Controllers
                 sb.AppendLine(row("Hora inicio", s.HoraInicio));
                 sb.AppendLine(row("Hora fin", s.HoraFin));
                 sb.AppendLine(row("Días laborales", s.DiasLaborales));
-                sb.AppendLine(row("Centro de Costos (opcional F)", s.CentroCostosF));
+                sb.AppendLine(row("Centro de Costos", s.CentroCostos));
                 sb.AppendLine(row("Tipo de solicitud", s.TipoSolicitud));
                 sb.AppendLine(row("Tipo de contrato", s.TipoContrato));
                 sb.AppendLine(row("# Meses (si fijo)", s.MesesContrato));
@@ -955,16 +901,12 @@ namespace BackendRequisicionPersonal.Controllers
             sb.AppendLine("</table>");
             return sb.ToString();
         }
-
-        // ---------- Templates (Solicitante / GH / Aprobador / VP GH / Cierre) ----------
-
         private string TemplateCorreoInfoSolicitante(SolicitudPersonal s, string estadoTitulo)
         {
             var titulo = $"Requisición #{s.Id} — {estadoTitulo}";
             var body = EncabezadoBasico(s) + DetallePorTipo(s);
             return ShellCorreo(titulo, body);
         }
-
         private string TemplateCorreoFinalSolicitante(SolicitudPersonal s, bool aprobado, string? motivoRechazo)
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
@@ -975,8 +917,6 @@ namespace BackendRequisicionPersonal.Controllers
             var titulo = $"Requisición #{s.Id} — {(aprobado ? "APROBADA" : "RECHAZADA")}";
             return ShellCorreo(titulo, extra + header);
         }
-
-        // GH con botones (para estados: EN REVISIÓN / EN SELECCIÓN)
         private string TemplateCorreoGhConBotones(SolicitudPersonal s, string estadoTitulo)
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
@@ -986,25 +926,21 @@ namespace BackendRequisicionPersonal.Controllers
             string info;
             if (estadoTitulo.Contains("REVISIÓN", StringComparison.OrdinalIgnoreCase))
             {
-                // GH valida y envía a aprobación (EN APROBACIÓN)
                 aprobarUrl = BuildGetUrl($"/api/requisiciones/revisado-rrhh?id={s.Id}");
-                info = "<p style='margin:8px 0;color:#374151;'>Acción de GH: validar y <b>enviar a aprobación</b>.</p>";
+                info = "";
             }
             else if (estadoTitulo.Contains("SELECCIÓN", StringComparison.OrdinalIgnoreCase))
             {
-                // GH aprueba la selección y envía a VP GH
                 aprobarUrl = BuildGetUrl($"/api/requisiciones/vpgh/enviar?id={s.Id}");
                 info = "<p style='margin:8px 0;color:#374151;'>Acción de GH: guardar/validar el seleccionado y, si procede, <b>enviar a VP GH</b>.</p>";
             }
             else
             {
-                // Fallback defensivo (no debería ocurrir)
                 aprobarUrl = BuildAccionUrl(s.Id, "APROBADA");
                 info = "";
             }
 
-            // Rechazo: permanece usando /accion?estado=RECHAZADA
-            var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA");
+            var rechazarUrl = BuildFrontRechazoUrl(s.Id);
 
             var buttons = $@"
             {info}
@@ -1018,13 +954,11 @@ namespace BackendRequisicionPersonal.Controllers
                  RECHAZAR
               </a>
             </div>
-            <p style='font-size:12px;color:#666;margin-top:8px;'>Use los botones para continuar el flujo.</p>";
+            ";
 
             var titulo = $"Requisición #{s.Id} — {estadoTitulo}";
             return ShellCorreo(titulo, header + buttons);
         }
-
-        // Aprobador con botones
         private string TemplateCorreoAprobador(SolicitudPersonal s, string aprobadorEmail)
         {
             var header = EncabezadoBasico(s) + @"
@@ -1035,7 +969,7 @@ namespace BackendRequisicionPersonal.Controllers
             </div>" + DetallePorTipo(s);
 
             var aprobarUrl = BuildAccionUrl(s.Id, "APROBADA", aprobadorEmail);
-            var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA", aprobadorEmail);
+            var rechazarUrl = BuildFrontRechazoUrl(s.Id, aprobadorEmail);
 
             var buttons = $@"
             <div style='margin:18px 0; display:flex; gap:12px;'>
@@ -1053,14 +987,12 @@ namespace BackendRequisicionPersonal.Controllers
             var titulo = $"Requisición #{s.Id} — EN APROBACIÓN";
             return ShellCorreo(titulo, header + buttons);
         }
-
-        // VP GH con botones
         private string TemplateCorreoVpGhConBotones(SolicitudPersonal s)
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
 
-            var aprobarUrl = BuildAccionUrl(s.Id, "CERRADO");   // → CERRADO
-            var rechazarUrl = BuildAccionUrl(s.Id, "RECHAZADA");  // → RECHAZADA (avisa a solicitante)
+            var aprobarUrl = BuildAccionUrl(s.Id, "CERRADO");
+            var rechazarUrl = BuildFrontRechazoUrl(s.Id);
 
             var buttons = $@"
             <div style='margin:18px 0; display:flex; gap:12px;'>
@@ -1077,13 +1009,11 @@ namespace BackendRequisicionPersonal.Controllers
             var titulo = $"Requisición #{s.Id} — EN VP GH";
             return ShellCorreo(titulo, header + buttons);
         }
-
         private string TemplateCorreoCierre(SolicitudPersonal s)
         {
             var titulo = $"Requisición #{s.Id} — CERRADO";
             return ShellCorreo(titulo, EncabezadoBasico(s) + DetallePorTipo(s));
         }
-
         private string BuildAccionUrl(int id, string estado, string? actorEmail = null)
         {
             var req = HttpContext.Request;
@@ -1093,8 +1023,6 @@ namespace BackendRequisicionPersonal.Controllers
                 url += $"&actorEmail={Uri.EscapeDataString(actorEmail)}";
             return url;
         }
-
-        // Helper para construir URLs GET absolutas para correos (revisado-rrhh / vpgh/enviar)
         private string BuildGetUrl(string relativePathAndQuery)
         {
             var req = HttpContext.Request;
@@ -1128,6 +1056,22 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error en listar-por-aprobador correo={Correo}", correo);
                 return StatusCode(500, new { success = false, message = "Error interno del servidor" });
             }
+        }
+        private string BuildFrontRechazoUrl(int id, string? actorEmail = null)
+        {
+            var baseUrl = _config["Frontend:BaseUrl"];
+
+            if (string.IsNullOrWhiteSpace(baseUrl))
+            {
+                var req = HttpContext?.Request;
+                baseUrl = req != null ? $"{req.Scheme}://{req.Host}" : "";
+            }
+
+            var url = $"{baseUrl}/rechazar?id={id}";
+            if (!string.IsNullOrWhiteSpace(actorEmail))
+                url += $"&actorEmail={Uri.EscapeDataString(actorEmail)}";
+
+            return url;
         }
 
     }

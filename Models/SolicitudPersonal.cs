@@ -5,9 +5,7 @@
         public int Id { get; set; }
 
         public string IdSolicitante { get; set; }
-        // Conveniencia para el frontend (CSV / vistas): mismo valor que IdSolicitante
         public string UsuarioSolicitante => IdSolicitante;
-
         public string Tipo { get; set; }
         public string FechaSolicitud { get; set; }
         public string Vicepresidencia { get; set; }

@@ -225,9 +225,6 @@ namespace BackendRequisicionPersonal.Services
                 var id = idObj is null ? 0 : Convert.ToInt32(idObj);
                 _logger.LogInformation("Insert OK. ID: {Id} (Tipo={Tipo}, NivelInicial={Nivel})", id, x.Tipo, nivel);
 
-                // (Opcional) Puedes construir el correo aquí si quieres:
-                // var (asunto, html) = ConstruirCorreoRequisicion(id);
-
                 return id;
             }
             catch (Exception ex)
@@ -237,7 +234,6 @@ namespace BackendRequisicionPersonal.Services
                 return 0;
             }
         }
-
         public List<SolicitudPersonal> Listar(string usuarioId)
         {
             var list = new List<SolicitudPersonal>();
@@ -689,55 +685,68 @@ namespace BackendRequisicionPersonal.Services
                     ap3Estado = r.IsDBNull(7) ? null : r.GetString(7).Trim().ToUpperInvariant();
                 }
 
-                // === RECHAZO: siempre posible, termina en RECHAZADA ===
+                if (nivelActual == "FINAL")
+                {
+                    if (!string.IsNullOrEmpty(ap1Correo) && (string.IsNullOrEmpty(ap1Estado) || ap1Estado == "PENDIENTE"))
+                        nivelActual = "1";
+                    else if (!string.IsNullOrEmpty(ap2Correo) && (string.IsNullOrEmpty(ap2Estado) || ap2Estado == "PENDIENTE"))
+                        nivelActual = "2";
+                    else if (!string.IsNullOrEmpty(ap3Correo) && (string.IsNullOrEmpty(ap3Estado) || ap3Estado == "PENDIENTE"))
+                        nivelActual = "3";
+                }
+                
                 if (decision == "RECHAZADA")
                 {
-                    var rejectSql = @"
-                UPDATE solicitudes_aprobaciones_personal
-                   SET estado = 'RECHAZADA',
-                       nivel_aprobacion = 'FINAL',
-                       fecha_aprobacion = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
-                 WHERE id = @id";
-                    using var rej = new DB2Command(rejectSql, cn, tx);
-                    rej.Parameters.Add(new DB2Parameter("@id", id));
-                    rej.ExecuteNonQuery();
+                    string fecha = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
-                    // Si estaba en nivel 1/2/3, registra motivo y marca ese nivel como RECHAZADA
+                    // 1️⃣ Rechaza el nivel actual con motivo
                     if (nivelActual == "1" || nivelActual == "2" || nivelActual == "3")
                     {
                         var pref = $"ap{nivelActual}_";
-                        var motSql = $@"
+                        var sqlNivel = $@"
                     UPDATE solicitudes_aprobaciones_personal
                        SET {pref}estado = 'RECHAZADA',
                            {pref}fecha  = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S'),
                            {pref}motivo = @motivo
                      WHERE id = @id";
-                        using var mot = new DB2Command(motSql, cn, tx);
-                        mot.Parameters.Add(new DB2Parameter("@motivo", (object?)motivo ?? DBNull.Value));
-                        mot.Parameters.Add(new DB2Parameter("@id", id));
-                        mot.ExecuteNonQuery();
+                        using var cmdNivel = new DB2Command(sqlNivel, cn, tx);
+                        cmdNivel.Parameters.Add(new DB2Parameter("@motivo", (object?)motivo ?? DBNull.Value));
+                        cmdNivel.Parameters.Add(new DB2Parameter("@id", id));
+                        cmdNivel.ExecuteNonQuery();
                     }
 
+                    // 2️⃣ Marca la requisición como rechazada globalmente
+                    var sqlMain = @"
+                UPDATE solicitudes_aprobaciones_personal
+                   SET estado = 'RECHAZADA',
+                       nivel_aprobacion = 'FINAL',
+                       fecha_aprobacion = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
+                 WHERE id = @id";
+                    using var cmdMain = new DB2Command(sqlMain, cn, tx);
+                    cmdMain.Parameters.Add(new DB2Parameter("@id", id));
+                    cmdMain.ExecuteNonQuery();
+
                     tx.Commit();
+                    _logger.LogInformation("[AplicarAccion] Rechazo registrado correctamente para id={Id}, motivo={Motivo}", id, motivo);
                     return true;
                 }
 
+                // === BLOQUE CIERRE ===
                 if (decision == "CERRADO")
                 {
-                    // Por diseño, solo cerramos desde EN VP GH
                     if (!string.Equals(estadoGeneral, "EN VP GH", StringComparison.OrdinalIgnoreCase))
                     {
                         _logger.LogWarning("Intento de CERRADO estando en {Estado} (id={Id}). Se ignora.", estadoGeneral, id);
                         tx.Commit();
-                        return true; // No cerramos, pero no lanzamos error para no romper el flujo actual
+                        return true;
                     }
 
                     var closeSql = @"
-                    UPDATE solicitudes_aprobaciones_personal
-                       SET estado = 'CERRADO',
-                           nivel_aprobacion = 'FINAL',
-                           fecha_aprobacion = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
-                     WHERE id = @id";
+                UPDATE solicitudes_aprobaciones_personal
+                   SET estado = 'CERRADO',
+                       nivel_aprobacion = 'FINAL',
+                       fecha_aprobacion = TO_CHAR(CURRENT, '%Y-%m-%d %H:%M:%S')
+                 WHERE id = @id";
 
                     using (var closeCmd = new DB2Command(closeSql, cn, tx))
                     {
@@ -749,10 +758,9 @@ namespace BackendRequisicionPersonal.Services
                     return true;
                 }
 
-                // === APROBACIÓN: solo avanza la cadena; si se completa → EN SELECCION ===
+                // === BLOQUE APROBACIÓN ===
                 if (nivelActual == "FINAL" || estadoGeneral is "APROBADA" or "RECHAZADA" or "CERRADO" or "EN SELECCION" or "EN VP GH")
                 {
-                    // No hacemos nada aquí; VP GH y cierre se manejan por endpoints dedicados.
                     tx.Commit();
                     return true;
                 }
@@ -774,15 +782,14 @@ namespace BackendRequisicionPersonal.Services
 
                 string prefix = $"ap{lvl}_";
 
-                // 👇 Ajuste: setear correo y nombre del aprobador si faltan
                 string setCorreoYNombre = "";
                 if (!string.IsNullOrWhiteSpace(actorEmail))
                 {
                     setCorreoYNombre = $@",
-                   {prefix}correo = CASE WHEN {prefix}correo IS NULL OR TRIM({prefix}correo) = ''
-                                         THEN CAST(@actorEmail AS CHAR(100)) ELSE {prefix}correo END,
-                   {prefix}nombre = CASE WHEN {prefix}nombre IS NULL OR TRIM({prefix}nombre) = ''
-                                         THEN CAST(@actorNombre AS CHAR(100)) ELSE {prefix}nombre END";
+               {prefix}correo = CASE WHEN {prefix}correo IS NULL OR TRIM({prefix}correo) = ''
+                                     THEN CAST(@actorEmail AS CHAR(100)) ELSE {prefix}correo END,
+               {prefix}nombre = CASE WHEN {prefix}nombre IS NULL OR TRIM({prefix}nombre) = ''
+                                     THEN CAST(@actorNombre AS CHAR(100)) ELSE {prefix}nombre END";
                 }
 
                 string NextNivelCalc(string curr) =>
@@ -1389,45 +1396,43 @@ ORDER BY fecha_solicitud DESC";
 
             return lista;
         }
-
         public async Task<List<dynamic>> GetSolicitudesVpGhAsync(string identificacion)
         {
             var resultados = new List<dynamic>();
 
-
             try
             {
-                using (var cn = new DB2Connection(_cs))
+                using (var cn = new DB2Connection(_connectionString))
                 {
                     await cn.OpenAsync();
 
                     const string sql = @"
-                SELECT
-                    s.id,
-                    s.tipo,
-                    s.cargo_requerido,
-                    s.jefe_inmediato,
-                    s.ciudad_trabajo,
-                    s.fecha_solicitud,
-                    s.estado,
-                    s.id_solicitante
-                FROM solicitudes_aprobaciones_personal s
-                WHERE TRIM(UPPER(s.estado)) = 'EN VP GH'
-                  AND EXISTS (
-                        SELECT 1
-                        FROM requisiciones_aprobaciones_personal r
-                        WHERE TRIM(r.identificacion) = ?
-                          AND (
-                                TRIM(UPPER(r.cargo)) = 'VICEPRESIDENTE DE GESTION HUMANA'
-                             OR TRIM(UPPER(r.area)) = 'VP GESTION HUMANA'
-                          )
-                  )
-                ORDER BY s.fecha_solicitud DESC";
+                    SELECT
+                        s.id,
+                        s.tipo,
+                        s.cargo_requerido,
+                        s.jefe_inmediato,
+                        s.ciudad_trabajo,
+                        s.fecha_solicitud,
+                        s.estado,
+                        s.id_solicitante
+                    FROM solicitudes_aprobaciones_personal s
+                    WHERE TRIM(UPPER(s.estado)) = 'EN VP GH'
+                      AND EXISTS (
+                            SELECT 1
+                            FROM requisiciones_aprobaciones_personal r
+                            WHERE TRIM(r.identificacion) = ?
+                              AND (
+                                    TRIM(UPPER(r.cargo)) = 'VICEPRESIDENTE DE GESTION HUMANA'
+                                 OR TRIM(UPPER(r.area)) = 'VP GESTION HUMANA'
+                              )
+                      )
+                    ORDER BY s.fecha_solicitud DESC";
 
                     using (var cmd = cn.CreateCommand())
                     {
                         cmd.CommandText = sql;
-                        cmd.Parameters.Add(new DB2Parameter { Value = identificacion });
+                        cmd.Parameters.Add(new IBM.Data.Db2.DB2Parameter { Value = identificacion });
 
                         using var r = await cmd.ExecuteReaderAsync();
                         while (await r.ReadAsync())
