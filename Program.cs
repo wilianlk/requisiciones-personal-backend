@@ -4,6 +4,11 @@ using BackendRequisicionPersonal.Services;
 using BackendRequisicionPersonal.Services.Auth;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
+using DinkToPdf;
+using DinkToPdf.Contracts;
+using BackendRequisicionPersonal.Utilities;
+
+CustomWkhtmlLoader.LoadWkhtmltox();
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -28,6 +33,10 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddControllers();
 builder.Services.AddScoped<SolicitudesPersonalService>();
 builder.Services.AddScoped<AuthService>();
+
+// PDF
+builder.Services.AddSingleton(typeof(IConverter), new SynchronizedConverter(new PdfTools()));
+builder.Services.AddTransient<PdfService>();
 
 // SMTP --> IOptions<SmtpSettings>
 builder.Services.Configure<SmtpSettings>(builder.Configuration.GetSection("Smtp"));

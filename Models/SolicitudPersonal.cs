@@ -50,20 +50,25 @@
         public string Estado { get; set; }
         public string NivelAprobacion { get; set; }
         public string CreadoEn { get; set; }
+
         public string FechaEnvioAprobacion { get; set; }
+        public string GhRevNombre { get; set; }
+        public string GhRevCorreo { get; set; }
+        public string GhRevFecha { get; set; }
+        public string GhRevMotivo { get; set; }
+
         public string FechaAprobacion { get; set; }
+        public string FechaFinAprobadores { get; set; }
 
         public string SalarioAsignado { get; set; }
         public string FechaIngreso { get; set; }
         public string AprobacionesIngreso { get; set; }
 
-        // ===== Seleccionado (Gestión Humana) =====
         public string NombreSeleccionado { get; set; }
         public string IdentificacionSeleccionado { get; set; }
         public string FechaIngresoSeleccionado { get; set; }
         public string TipoContratoSeleccionado { get; set; }
 
-        // ===== Aprobadores (opcionalmente poblados) =====
         public string Ap1Nombre { get; set; }
         public string Ap1Correo { get; set; }
         public string Ap1Estado { get; set; }
@@ -82,10 +87,23 @@
         public string Ap3Fecha { get; set; }
         public string Ap3Motivo { get; set; }
 
+        public string VpCierreNombre { get; set; }
+        public string VpCierreCorreo { get; set; }
+        public string VpCierreMotivo { get; set; }   
+        public string FechaCierre { get; set; }
+
         public string? Ap1EstadoUi { get; set; }
         public string? Ap2EstadoUi { get; set; }
         public string? Ap3EstadoUi { get; set; }
         public string? NivelActualUi { get; set; }
         public string? EstadoUi { get; set; }
+
+        public string? SolicitanteNombre { get; set; }
+        public string? SolicitanteCorreo { get; set; }
+
+        public string? AprobadorPendienteNombre { get; set; }
+        public string? AprobadorPendienteCorreo { get; set; }
+
+        public List<Dictionary<string, string>> Aprobadores { get; set; } = new();
     }
 }

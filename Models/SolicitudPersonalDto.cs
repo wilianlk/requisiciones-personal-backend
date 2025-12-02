@@ -10,7 +10,13 @@ namespace BackendRequisicionPersonal.Models
         [Required] public string Vicepresidencia { get; set; } = default!;
         [Required] public string JefeInmediato { get; set; } = default!;
         [Required] public string CargoRequerido { get; set; } = default!;
-        public string? CentroCostos { get; set; }
+
+        // CAMBIOS: ahora es obligatorio
+        [Required] public string CentroCostos { get; set; } = default!;
+
+        // CAMBIOS: ahora es obligatorio
+        [Required] public string HorarioTrabajo { get; set; } = default!;
+
         [Required] public string DiasLaborales { get; set; } = default!;
         [Required] public string SalarioBasico { get; set; } = default!;
         [Required] public string TipoSolicitud { get; set; } = default!;
@@ -21,7 +27,6 @@ namespace BackendRequisicionPersonal.Models
 
         public string? IdSolicitante { get; set; }
         public string? NombreVp { get; set; }
-        public string? HorarioTrabajo { get; set; }
         public string? MesesContrato { get; set; }
         public string? Canal { get; set; }
         public string? Area { get; set; }

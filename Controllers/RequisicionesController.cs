@@ -24,6 +24,8 @@ namespace BackendRequisicionPersonal.Controllers
         private readonly ILogger<RequisicionesController> _logger;
         private readonly SmtpSettings _smtp;
         private readonly IConfiguration _config;
+        private readonly PdfService _pdfService;
+        private readonly IWebHostEnvironment _env;
 
         private List<string> _ccPowerApps = new();
 
@@ -31,14 +33,17 @@ namespace BackendRequisicionPersonal.Controllers
             SolicitudesPersonalService service,
             ILogger<RequisicionesController> logger,
             IOptions<SmtpSettings> smtpOptions,
-            IConfiguration config)
+            IConfiguration config,
+            PdfService pdfService,
+            IWebHostEnvironment env)
         {
             _service = service;
             _logger = logger;
             _smtp = smtpOptions.Value;
             _config = config;
+            _pdfService = pdfService;
+            _env = env;
 
-            // Cargar CC PowerApps (string o array)
             try
             {
                 var ccOne = _config["PowerApps:CC"];
@@ -59,9 +64,6 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  Health
-         * =========================================================== */
         [HttpGet("test-connection")]
         public IActionResult TestConnection()
         {
@@ -126,82 +128,67 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  GH marca revisado → EN APROBACION
-         *  Correos: (1) solicitante (dedupe con aprobadores) (2) aprobador actual (con botones)
-         * =========================================================== */
         [HttpPost("revisado-rrhh")]
-        public async Task<IActionResult> RevisadoRrhh([FromQuery] int id)
+        public async Task<IActionResult> RevisadoRrhh([FromQuery] int id, [FromQuery] string? identificacion = null)
         {
-            _logger.LogInformation("➡️  POST /api/requisiciones/revisado-rrhh id={Id}", id);
-            if (id <= 0)
-                return BadRequest(new { success = false, message = "Id inválido" });
+            _logger.LogInformation("➡️  POST /api/requisiciones/revisado-rrhh id={Id} ident={Ident}", id, identificacion);
+            if (id <= 0) return BadRequest(new { success = false, message = "Id inválido" });
 
-            try
+            identificacion = !string.IsNullOrWhiteSpace(identificacion)
+                ? identificacion.Trim()
+                : _config["RRHH:Identificacion"];
+
+            if (string.IsNullOrWhiteSpace(identificacion))
             {
-                // 1) Validar existencia
-                var solPrev = _service.ObtenerSolicitudPorId(id);
-                if (solPrev == null)
-                {
-                    _logger.LogWarning("⚠️ RevisadoRRHH: solicitud no encontrada id={Id}", id);
-                    return NotFound(new { success = false, message = "Solicitud no encontrada" });
-                }
-
-                // 2) Marcar revisado (pasa a EN APROBACION en BD)
-                var ok = _service.MarcarRevisadoRrhh(id);
-                if (!ok)
-                {
-                    _logger.LogWarning("⚠️ RevisadoRRHH: no se pudo marcar revisado id={Id}", id);
-                    return StatusCode(500, new { success = false, message = "No se pudo marcar revisado" });
-                }
-
-                // 3) Refrescar la solicitud para tener el estado actualizado
-                var sol = _service.ObtenerSolicitudPorId(id) ?? solPrev;
-
-                // 4) Aprobador(es) del nivel actual
-                var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
-
-                if (EsAdministrativo(sol))
-                {
-                    // ADMINISTRATIVO: un solo correo al Aprobador 1 (con botones), sin informativo al solicitante
-                    var aprobador1 = FirstEmail(correosRaw);
-                    if (!string.IsNullOrWhiteSpace(aprobador1))
-                        await EnviarCorreoAprobadorAsync(sol, aprobador1);
-                    else
-                        _logger.LogWarning("⚠️ RevisadoRRHH(ADMIN): sin aprobador1 id={Id}", id);
-
-                    return Ok(new { success = true, message = "Revisión GH registrada. Notificado solo Aprobador 1 (ADMINISTRATIVO)." });
-                }
-
-                // COMERCIAL: informativo al solicitante SOLO si no coincide con aprobador; siempre enviar a aprobador(es)
-                await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
-
-                var correos = DistinctNormalizedEmails(correosRaw);
-                if (correos.Count == 0)
-                {
-                    _logger.LogWarning("⚠️ RevisadoRRHH: no hay aprobador pendiente id={Id}", id);
-                    return Ok(new { success = true, message = "Marcado revisado. No hay aprobadores pendientes." });
-                }
-
-                foreach (var correoAp in correos)
-                    await EnviarCorreoAprobadorAsync(sol, correoAp);
-
-                return Ok(new { success = true, message = "Revisión GH registrada y envío al aprobador del nivel actual." });
+                _logger.LogWarning("⚠️ Sin Identificacion por query ni en appsettings (Identificacion:Default)");
+                return StatusCode(500, new { success = false, message = "No hay identificación configurada." });
             }
-            catch (Exception ex)
+
+            var solPrev = _service.ObtenerSolicitudPorId(id);
+            if (solPrev == null)
             {
-                _logger.LogError(ex, "❌ Error en revisado-rrhh id={Id}: {Msg}", id, ex.Message);
-                return StatusCode(500, new { success = false, message = "Error interno al marcar revisado" });
+                _logger.LogWarning("⚠️ Solicitud no encontrada id={Id}", id);
+                return NotFound(new { success = false, message = "Solicitud no encontrada" });
             }
+
+            var ok = _service.MarcarRevisadoRrhh(id, identificacion);
+            if (!ok)
+            {
+                _logger.LogWarning("⚠️ Fallo al marcar revisado: id={Id}, ident={Ident}", id, identificacion);
+                return BadRequest(new { success = false, message = "No se pudo marcar como revisado por GH." });
+            }
+
+            var sol = _service.ObtenerSolicitudPorId(id) ?? solPrev;
+            var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
+
+            if (EsAdministrativo(sol))
+            {
+                var aprobador1 = FirstEmail(correosRaw);
+                if (!string.IsNullOrWhiteSpace(aprobador1))
+                {
+                    await EnviarCorreoAprobadorAsync(sol, aprobador1);
+                    _logger.LogInformation("📧 ADMIN: enviado a aprobador1={Aprobador1} id={Id}", aprobador1, id);
+                }
+                else
+                {
+                    _logger.LogWarning("⚠️ ADMIN: sin aprobador1 id={Id}", id);
+                }
+                _logger.LogInformation("✅ RevisadoRRHH ADMIN completado id={Id}", id);
+                return Ok(new { success = true, message = "Revisión GH registrada. Notificado Aprobador 1 (ADMINISTRATIVO)." });
+            }
+
+            await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
+            foreach (var correoAp in DistinctNormalizedEmails(correosRaw))
+                await EnviarCorreoAprobadorAsync(sol, correoAp);
+
+            _logger.LogInformation("✅ RevisadoRRHH completado id={Id} ident={Ident}", id, identificacion);
+            return Ok(new { success = true, message = "Revisión GH registrada y envío al aprobador actual." });
         }
 
-        // (Para que el botón del correo funcione con GET)
         [HttpGet("revisado-rrhh")]
-        public Task<IActionResult> RevisadoRrhhGet([FromQuery] int id) => RevisadoRrhh(id);
+        public Task<IActionResult> RevisadoRrhhGet([FromQuery] int id, [FromQuery] string? identificacion = null)
+            => RevisadoRrhh(id, identificacion);
 
-        /* ===========================================================
-         *  Listar / Catálogos
-         * =========================================================== */
         [HttpGet("listar")]
         public IActionResult Listar([FromQuery] string usuarioId)
         {
@@ -337,21 +324,12 @@ namespace BackendRequisicionPersonal.Controllers
             }
         }
 
-        /* ===========================================================
-         *  Acciones Aprobación / Rechazo (flujo secuencial)
-         *  Lógica de envíos post-acción según NUEVO estado:
-         *   - EN APROBACION  → correo a siguiente aprobador + aviso (dedupe con aprobadores)
-         *   - EN SELECCION   → correo a GH con botones + aviso a solicitante
-         *   - EN VP GH       → correo con botones a VP GH (uno o varios)
-         *   - CERRADO        → correos separados a Nómina (uno o varios) y a GH
-         *   - RECHAZADA      → correo al solicitante
-         * =========================================================== */
         [HttpGet("accion")]
         public async Task<IActionResult> Accion(
-            [FromQuery] int id,
-            [FromQuery] string estado,
-            [FromQuery] string? motivo = null,
-            [FromQuery] string? actorEmail = null)
+        [FromQuery] int id,
+        [FromQuery] string estado,
+        [FromQuery] string? motivo = null,
+        [FromQuery] string? actorEmail = null)
         {
             _logger.LogInformation("➡️  GET /api/requisiciones/accion id={Id} estado={Estado} actor={Actor}", id, estado, actorEmail);
 
@@ -359,8 +337,34 @@ namespace BackendRequisicionPersonal.Controllers
                 return BadRequest(new { success = false, message = "Parámetros inválidos" });
 
             var up = estado.Trim().ToUpperInvariant();
-            if (up != "APROBADA" && up != "RECHAZADA" && up != "CERRADO")
-                return BadRequest(new { success = false, message = "Estado inválido. Use APROBADA, RECHAZADA o CERRADO." });
+
+            // ✅ Nuevos estados válidos según la tabla de flujo completa
+            var permitidos = new HashSet<string>
+    {
+        "EN APROBACION",
+        "EN REVISION POR GESTION GH",
+        "APROBADA",
+        "RECHAZADA",
+        "CERRADO",
+        "APROBADO POR GESTION GH",
+        "RECHAZADO POR GESTION GH",
+        "EN SELECCION",
+        "APROBADO POR SELECCIÓN",
+        "RECHAZADO POR SELECCIÓN",
+        "EN VP GH",
+        "APROBADO POR VP GH",
+        "RECHAZADO POR VP GH"
+    };
+
+            if (!permitidos.Contains(up))
+                return BadRequest(new
+                {
+                    success = false,
+                    message = "Estado inválido. Use uno de los siguientes: " +
+                              "EN APROBACION, EN REVISION POR GESTION GH, APROBADA, RECHAZADA, CERRADO, " +
+                              "APROBADO/RECHAZADO POR GESTION GH, EN SELECCION, APROBADO/RECHAZADO POR SELECCIÓN, " +
+                              "EN VP GH, APROBADO/RECHAZADO POR VP GH."
+                });
 
             try
             {
@@ -377,70 +381,55 @@ namespace BackendRequisicionPersonal.Controllers
                 if (sol == null)
                     return Ok(new { success = true, message = "Acción aplicada" });
 
-                // Ramas de notificación según estado ACTUALIZADO
                 var estadoActual = (sol.Estado ?? "").Trim().ToUpperInvariant();
 
-                if (up == "RECHAZADA")
+                if (up == "RECHAZADA" || up.EndsWith("RECHAZADO POR VP GH") || up.EndsWith("RECHAZADO POR SELECCIÓN"))
                 {
-                    // Notificar solo al solicitante
                     await EnviarCorreoFinalSolicitanteAsync(sol, aprobado: false, motivoRechazo: motivo);
-                    return Ok(new { success = true, message = "Acción aplicada (RECHAZADA)" });
+                    return Ok(new { success = true, message = $"Acción aplicada ({up})" });
                 }
 
-                // APROBADA → depende del estado resultante
                 switch (estadoActual)
                 {
                     case "EN APROBACION":
+                        var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
+
+                        if (EsAdministrativo(sol))
                         {
-                            var (_, correosRaw) = _service.ObtenerCorreosAprobadorActual(id);
+                            var aprobador1 = FirstEmail(correosRaw);
+                            if (!string.IsNullOrWhiteSpace(aprobador1))
+                                await EnviarCorreoAprobadorAsync(sol, aprobador1);
 
-                            if (EsAdministrativo(sol))
-                            {
-                                // ADMINISTRATIVO: solo aprobador del nivel actual (uno), sin informativo al solicitante
-                                var aprobador1 = FirstEmail(correosRaw);
-                                if (!string.IsNullOrWhiteSpace(aprobador1))
-                                    await EnviarCorreoAprobadorAsync(sol, aprobador1);
-
-                                return Ok(new { success = true, message = "APROBADA → siguiente aprobador (ADMINISTRATIVO: solo Aprobador 1)." });
-                            }
-
-                            // COMERCIAL: informativo al solicitante SOLO si no coincide con aprobador; y correo(s) al aprobador(es)
-                            await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
-
-                            foreach (var correoAp in DistinctNormalizedEmails(correosRaw).Where(c => !string.IsNullOrWhiteSpace(c)))
-                                await EnviarCorreoAprobadorAsync(sol, correoAp.Trim());
-
-                            return Ok(new { success = true, message = "APROBADA → siguiente aprobador" });
+                            return Ok(new { success = true, message = "APROBADA → siguiente aprobador (ADMINISTRATIVO)" });
                         }
+
+                        await NotificarSolicitanteSinDuplicarAprobadoresAsync(sol, "EN APROBACIÓN", correosRaw);
+
+                        foreach (var correoAp in DistinctNormalizedEmails(correosRaw).Where(c => !string.IsNullOrWhiteSpace(c)))
+                            await EnviarCorreoAprobadorAsync(sol, correoAp.Trim());
+
+                        return Ok(new { success = true, message = "APROBADA → siguiente aprobador" });
 
                     case "EN SELECCION":
-                        // Aprobaciones completadas → GH con botones + solicitante
                         await EnviarCorreoEstadoSolicitanteAsync(sol, "EN SELECCIÓN");
-                        {
-                            var aGh = GetCorreosGestionHumana();
-                            if (aGh.Any())
-                                await EnviarCorreoGhConBotonesAsync(sol, aGh, "EN SELECCIÓN");
-                        }
+                        var aGh = GetCorreosGestionHumana();
+                        if (aGh.Any())
+                            await EnviarCorreoGhConBotonesAsync(sol, aGh, "EN SELECCIÓN");
                         return Ok(new { success = true, message = "APROBADA FINAL → EN SELECCIÓN" });
 
                     case "EN VP GH":
-                        // Ya está en VP GH → notificar VP GH con botones (uno o varios)
-                        {
-                            var aVp = GetCorreosVpGh().ToList();
-                            if (aVp.Any())
-                                await EnviarCorreoVpGhConBotonesAsync(sol, aVp);
-                            else
-                                _logger.LogWarning("⚠️ EN VP GH: no hay correos configurados en VPGH:Correo/Correos");
-                        }
+                        var aVp = GetCorreosVpGh().ToList();
+                        if (aVp.Any())
+                            await EnviarCorreoVpGhConBotonesAsync(sol, aVp);
+                        else
+                            _logger.LogWarning("⚠️ EN VP GH: no hay correos configurados en VPGH:Correo/Correos");
                         return Ok(new { success = true, message = "EN VP GH → VP notificado" });
 
                     case "CERRADO":
-                        // VP GH aprobó → Correos separados a Nómina (uno o varios) y GH
                         await EnviarCorreoCierreANominaYGhAsync(sol);
                         return Ok(new { success = true, message = "CERRADO → Nómina y GH notificados" });
 
                     default:
-                        // Fallback: solo avisar al solicitante del estado actual
                         await EnviarCorreoEstadoSolicitanteAsync(sol, EstadoTitulo(sol.Estado));
                         return Ok(new { success = true, message = $"Acción aplicada, estado actual: {estadoActual}" });
                 }
@@ -486,22 +475,25 @@ namespace BackendRequisicionPersonal.Controllers
         }
 
         [HttpPost("vpgh/aprobar")]
-        public async Task<IActionResult> AprobarVpGhCerrar([FromQuery] int id)
+        public async Task<IActionResult> AprobarVpGhCerrar([FromQuery] int id, [FromQuery] string? identificacion = null)
         {
-            _logger.LogInformation("➡️  POST /api/requisiciones/vpgh/aprobar id={Id}", id);
-            if (id <= 0) return BadRequest(new { success = false, message = "Id inválido" });
+            _logger.LogInformation("➡️  POST /api/requisiciones/vpgh/aprobar id={Id} usuario={User}", id, identificacion ?? "(sin id)");
+
+            if (id <= 0)
+                return BadRequest(new { success = false, message = "Id inválido" });
 
             try
             {
                 var sol = _service.ObtenerSolicitudPorId(id);
-                if (sol == null) return NotFound(new { success = false, message = "Solicitud no encontrada" });
+                if (sol == null)
+                    return NotFound(new { success = false, message = "Solicitud no encontrada" });
 
-                // Solo cerrar desde EN VP GH
                 if (!string.Equals(sol.Estado?.Trim(), "EN VP GH", StringComparison.OrdinalIgnoreCase))
                     return StatusCode(409, new { success = false, message = "Solo se puede cerrar si la solicitud está en 'EN VP GH'." });
 
                 var ok = _service.CerrarRequisicion(id);
-                if (!ok) return StatusCode(500, new { success = false, message = "No se pudo cerrar la requisición" });
+                if (!ok)
+                    return StatusCode(500, new { success = false, message = "No se pudo cerrar la requisición" });
 
                 await EnviarCorreoCierreANominaYGhAsync(sol);
 
@@ -509,7 +501,7 @@ namespace BackendRequisicionPersonal.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error en vpgh/aprobar id={Id}: {Msg}", id, ex.Message);
+                _logger.LogError(ex, "❌ Error en vpgh/aprobar id={Id} usuario={User}: {Msg}", id, identificacion ?? "(sin id)", ex.Message);
                 return StatusCode(500, new { success = false, message = "Error interno" });
             }
         }
@@ -586,24 +578,6 @@ namespace BackendRequisicionPersonal.Controllers
                 _ => string.IsNullOrWhiteSpace(estado) ? "-" : estado.Trim()
             };
         }
-
-        private static string CalcularAccionRequerida(string? estado, string? nivel)
-        {
-            var e = (estado ?? "").Trim().ToUpperInvariant();
-            var n = (nivel ?? "").Trim().ToUpperInvariant();
-
-            return e switch
-            {
-                "EN REVISION POR GESTION GH" => "Gestión Humana",
-                "EN APROBACION" => string.IsNullOrWhiteSpace(n) || n == "FINAL" ? "Aprobador" : $"Aprobador nivel {n}",
-                "EN SELECCION" => "Gestión Humana",
-                "EN VP GH" => "VP GH",
-                "APROBADA" => "-",
-                "RECHAZADA" => "-",
-                "CERRADO" => "-",
-                _ => "-"
-            };
-        }
         private static bool EsAdministrativo(SolicitudPersonal s)
             => string.Equals((s.Tipo ?? "").Trim(), "ADMINISTRATIVO", StringComparison.OrdinalIgnoreCase);
         private static string? FirstEmail(IEnumerable<string> correosRaw)
@@ -651,21 +625,32 @@ namespace BackendRequisicionPersonal.Controllers
             try
             {
                 var destinatarios = DestinatariosSolicitante(sol);
+
+                bool adjuntarPdf = estadoTitulo.Trim().ToUpper() == "EN REVISIÓN POR GESTIÓN GH";
+
                 foreach (var to in destinatarios)
                 {
                     using var smtp = BuildSmtp();
                     using var mail = BaseMail(sol,
                         $"Requisición #{sol.Id} — {estadoTitulo}",
-                        TemplateCorreoInfoSolicitante(sol, estadoTitulo));
+                        TemplateCorreoInfoSolicitante(sol, estadoTitulo),
+                        adjuntarPdf: adjuntarPdf);
+
                     mail.To.Add(to);
                     AddCcPowerApps(mail);
+
                     await smtp.SendMailAsync(mail);
-                    _logger.LogInformation("📧 Solicitante notificado ({Estado}) a {To} (id={Id})", estadoTitulo, to, sol.Id);
+
+                    _logger.LogInformation(
+                        "📧 Solicitante notificado ({Estado}) a {To} (adjuntoPdf={Adj}) (id={Id})",
+                        estadoTitulo, to, adjuntarPdf, sol.Id
+                    );
                 }
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "❌ Error correo solicitante ({Estado}) id={Id}: {Msg}", estadoTitulo, sol.Id, ex.Message);
+                _logger.LogError(ex, "❌ Error correo solicitante ({Estado}) id={Id}: {Msg}",
+                    estadoTitulo, sol.Id, ex.Message);
             }
         }
         private async Task EnviarCorreoFinalSolicitanteAsync(SolicitudPersonal sol, bool aprobado, string? motivoRechazo = null)
@@ -798,109 +783,232 @@ namespace BackendRequisicionPersonal.Controllers
                 _logger.LogError(ex, "❌ Error correos de Cierre id={Id}: {Msg}", sol.Id, ex.Message);
             }
         }
-        private MailMessage BaseMail(SolicitudPersonal s, string subject, string htmlBody)
-        {
-            return new MailMessage
+        private MailMessage BaseMail(
+        SolicitudPersonal s,
+        string subject,
+        string htmlBody,
+        bool adjuntarPdf = false
+         )
             {
-                From = new MailAddress(_smtp.User, "Requisición de Personal"),
-                Subject = subject,
-                Body = htmlBody,
-                IsBodyHtml = true
-            };
-        }
+                var mail = new MailMessage
+                {
+                    From = new MailAddress(_smtp.User, "Requisición de Personal"),
+                    Subject = subject,
+                    IsBodyHtml = true,
+                    BodyEncoding = Encoding.UTF8,
+                    SubjectEncoding = Encoding.UTF8
+                };
+
+                var req = HttpContext.Request;
+                string baseUrl = $"{req.Scheme}://{req.Host}";
+
+                string logoCid = Guid.NewGuid().ToString("N");
+                string logoPath;
+
+                if (_env.IsDevelopment())
+                {
+                    logoPath = Path.Combine(
+                        Directory.GetCurrentDirectory(),
+                        "wwwroot/img/logorecamier-01.png"
+                    );
+                }
+                else
+                {
+                    logoPath = Path.Combine(
+                        _env.WebRootPath,
+                        "img/logorecamier-01.png"
+                    );
+                }
+
+                string cuerpo = $@"
+                <!DOCTYPE html>
+                <html lang='es'>
+                <head>
+                  <meta charset='UTF-8'>
+                  <style>
+                    body {{
+                      font-family: Arial, sans-serif;
+                      background-color: #f8f8f8;
+                      padding: 16px;
+                    }}
+                    .logo-container {{
+                      text-align: center;
+                      padding-bottom: 8px;
+                      background-color: #ffffff;
+                    }}
+                    .container {{
+                      background: #ffffff;
+                      border: 1px solid #ddd;
+                      border-radius: 8px;
+                      max-width: 800px;
+                      margin: auto;
+                      overflow: hidden;
+                    }}
+                    .body {{
+                      padding: 16px 20px;
+                    }}
+                  </style>
+                </head>
+                <body>
+                  <div class='logo-container'>
+                    <img src='cid:{logoCid}' alt='Logo Recamier'
+                         style='max-width:300px;width:30%;height:auto;display:block;margin:auto;' />
+                  </div>
+                  <div class='container'>
+                    <div class='body'>
+                      {htmlBody}
+                    </div>
+                  </div>
+                </body>
+                </html>";
+
+                var htmlView = AlternateView.CreateAlternateViewFromString(cuerpo, Encoding.UTF8, "text/html");
+
+                if (System.IO.File.Exists(logoPath))
+                {
+                    var logo = new LinkedResource(logoPath, "image/png")
+                    {
+                        ContentId = logoCid,
+                        TransferEncoding = System.Net.Mime.TransferEncoding.Base64
+                    };
+
+                    htmlView.LinkedResources.Add(logo);
+                }
+
+                mail.AlternateViews.Add(htmlView);
+
+                if (adjuntarPdf)
+                {
+                    string estadoTitulo = EstadoTitulo(s.Estado);
+                    string titulo = $"Requisición #{s.Id} — {estadoTitulo}";
+
+                    string contenido = EncabezadoBasico(s) + DetallePorTipo(s);
+                    string htmlCompleto = ShellCorreo(titulo, contenido);
+
+                    var pdfBytes = _pdfService.HtmlToPdf(htmlCompleto);
+
+                    var stream = new MemoryStream(pdfBytes);
+                    mail.Attachments.Add(new Attachment(stream, $"Requisicion_{s.Id}.pdf", "application/pdf"));
+                }
+
+                return mail;
+            }
         private string ShellCorreo(string titulo, string contenidoHtml)
         {
             return $@"
-<html>
-  <body style='font-family: Arial, sans-serif; background:#f7f7f7; padding:16px;'>
-    <div style='max-width:800px;margin:auto;background:#fff;padding:16px;border-radius:8px;border:1px solid #eee;'>
-      <h2 style='margin:0 0 8px 0;color:#333;'>{WebUtility.HtmlEncode(titulo)}</h2>
-      {contenidoHtml}
-      <div style='margin-top:18px;color:#888;font-size:12px;'>Este es un mensaje automático. No responder a este correo.</div>
-    </div>
-  </body>
-</html>";
+            <html>
+              <body style='margin:0;padding:16px;background:#f3f4f6;'>
+                <div style=""max-width:840px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;
+                            border-radius:8px;overflow:hidden;font-family:Arial, Helvetica, sans-serif;color:#111827;"">
+                  <div style='background:#0b4f79;color:#ffffff;padding:16px 20px;'>
+                    <h2 style='margin:0;font-size:18px;line-height:1.2;'>{WebUtility.HtmlEncode(titulo)}</h2>
+                  </div>
+                  <div style='padding:16px 20px;'>
+                    {contenidoHtml}
+                  </div>
+                </div>
+              </body>
+            </html>";
         }
         private string EncabezadoBasico(SolicitudPersonal s)
         {
-            string K(string v) => $"<td style='padding:6px;border:1px solid #ddd;width:36%;'><b>{WebUtility.HtmlEncode(v)}</b></td>";
-            string V(string? v) => $"<td style='padding:6px;border:1px solid #ddd;'>{WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(v) ? "-" : v.Trim())}</td>";
-            string row(string k, string? v) => $"<tr>{K(k)}{V(v)}</tr>";
+            static string H(string? v) =>
+                WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(v) ? "-" : v.Trim());
+
+            string K(string v) =>
+                "<td style='padding:6px 10px;border:1px solid #d1d5db;width:35%;font-weight:bold;background:#f9fafb;" +
+                "font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;'>" +
+                WebUtility.HtmlEncode(v) + "</td>";
+
+            string V(string? v) =>
+                "<td style='padding:6px 10px;border:1px solid #d1d5db;font-family:Arial,Helvetica,sans-serif;" +
+                "font-size:14px;color:#111827;'>" + H(v) + "</td>";
+
+            string Row(string k, string? v) => $"<tr>{K(k)}{V(v)}</tr>";
 
             var sb = new StringBuilder();
-            sb.AppendLine("<table style='width:100%; border-collapse:collapse; margin:8px 0;'>");
-            sb.AppendLine(row("ID", $"#{s.Id}"));
-            //sb.AppendLine(row("Estado actual", EstadoTitulo(s.Estado)));
-            //sb.AppendLine(row("Acción requerida por", CalcularAccionRequerida(s.Estado, s.NivelAprobacion)));
-            sb.AppendLine(row("Nivel aprobación", s.NivelAprobacion));
-            sb.AppendLine(row("Tipo", s.Tipo));
-            sb.AppendLine(row("Cargo requerido", s.CargoRequerido));
-            sb.AppendLine(row("Jefe inmediato", s.JefeInmediato));
-            sb.AppendLine(row("Ciudad", s.CiudadTrabajo));
-            sb.AppendLine(row("Salario básico", s.SalarioBasico));
-            sb.AppendLine(row("Fecha solicitud", s.FechaSolicitud));
-            sb.AppendLine("</table>");
+            sb.Append("<table style='width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #d1d5db;'>");
+
+            sb.Append(Row("ID", $"#{s.Id}"));
+            sb.Append(Row("Nivel aprobacion", s.NivelAprobacion));
+            sb.Append(Row("Tipo", s.Tipo));
+            sb.Append(Row("Cargo requerido", s.CargoRequerido));
+            sb.Append(Row("Jefe inmediato", s.JefeInmediato));
+            sb.Append(Row("Ciudad", s.CiudadTrabajo));
+            sb.Append(Row("Salario basico", s.SalarioBasico));
+            sb.Append(Row("Fecha solicitud", s.FechaSolicitud));
+
+            sb.Append("</table>");
             return sb.ToString();
         }
         private string DetallePorTipo(SolicitudPersonal s)
         {
-            string K(string v) => $"<td style='padding:6px;border:1px solid #ddd;width:36%;'><b>{WebUtility.HtmlEncode(v)}</b></td>";
-            string V(string? v) => $"<td style='padding:6px;border:1px solid #ddd;'>{WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(v) ? "-" : v.Trim())}</td>";
-            string row(string k, string? v) => $"<tr>{K(k)}{V(v)}</tr>";
+            static string H(string? v) =>
+                WebUtility.HtmlEncode(string.IsNullOrWhiteSpace(v) ? "-" : v.Trim());
+
+            string K(string v) =>
+                "<td style='padding:6px 10px;border:1px solid #d1d5db;width:35%;font-weight:bold;background:#f9fafb;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;'>" +
+                WebUtility.HtmlEncode(v) + "</td>";
+
+            string V(string? v) =>
+                "<td style='padding:6px 10px;border:1px solid #d1d5db;font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#111827;'>" +
+                H(v) + "</td>";
+
+            string Row(string k, string? v) => $"<tr>{K(k)}{V(v)}</tr>";
 
             var tipo = (s.Tipo ?? "").Trim().ToUpperInvariant();
             var sb = new StringBuilder();
 
-            sb.AppendLine("<h3 style='margin:14px 0 6px 0;color:#333;'>Detalle de la solicitud</h3>");
-            sb.AppendLine("<table style='width:100%; border-collapse:collapse; margin:8px 0;'>");
+            sb.Append("<h3 style='margin:14px 0 8px 0;font-family:Arial,Helvetica,sans-serif;font-size:16px;color:#111827;'>Detalle de la solicitud</h3>");
+            sb.Append("<table style='width:100%;border-collapse:collapse;table-layout:fixed;border:1px solid #d1d5db;'>");
 
             if (tipo == "COMERCIAL")
             {
-                sb.AppendLine(row("Vicepresidencia", s.Vicepresidencia));
-                sb.AppendLine(row("Canal", s.Canal));
-                sb.AppendLine(row("Área", s.Area));
-                sb.AppendLine(row("Gerente de Canal", s.GerenteCanal));
-                sb.AppendLine(row("Gerente de División", s.GerenteDivision));
-                sb.AppendLine(row("Centro de Costos", s.CentroCostos));
-                sb.AppendLine(row("# Terr. asignado", s.TerrAsignado));
-                sb.AppendLine(row("% Cobro automático", s.CobroAutomatico));
-                sb.AppendLine(row("Horario de trabajo", s.HorarioTrabajo));
-                sb.AppendLine(row("Días laborales", s.DiasLaborales));
-                sb.AppendLine(row("Zona / ciudades", s.ZonaCiudades));
-                sb.AppendLine(row("Clientes a cargo", s.ClientesCargo));
-                sb.AppendLine(row("Canales a cargo (checklist)", s.CanalesCargo));
-                sb.AppendLine(row("Auxilio de movilización (COP)", s.AuxilioMovilizacion));
-                sb.AppendLine(row("Salario garantizado", s.SalarioGarantizado));
-                sb.AppendLine(row("Meses garantizado", s.MesesGarantizado));
-                sb.AppendLine(row("Promedio variable", s.PromedioVariable));
-                sb.AppendLine(row("Requiere vehículo/moto", s.RequiereMoto));
-                sb.AppendLine(row("Activar proceso por", s.ActivarProcesoPor));
-                sb.AppendLine(row("Tipo de solicitud", s.TipoSolicitud));
-                sb.AppendLine(row("Persona a reemplazar", s.PersonaReemplaza));
+                sb.Append(Row("Vicepresidencia", s.Vicepresidencia));
+                sb.Append(Row("Canal", s.Canal));
+                sb.Append(Row("Area", s.Area));
+                sb.Append(Row("Gerente de Canal", s.GerenteCanal));
+                sb.Append(Row("Gerente de Division", s.GerenteDivision));
+                sb.Append(Row("Centro de Costos", s.CentroCostos));
+                sb.Append(Row("# Terr. asignado", s.TerrAsignado));
+                sb.Append(Row("% Cobro automatico", s.CobroAutomatico));
+                sb.Append(Row("Horario de trabajo", s.HorarioTrabajo));
+                sb.Append(Row("Dias laborales", s.DiasLaborales));
+                sb.Append(Row("Zona / ciudades", s.ZonaCiudades));
+                sb.Append(Row("Clientes a cargo", s.ClientesCargo));
+                sb.Append(Row("Canales a cargo", s.CanalesCargo));
+                sb.Append(Row("Auxilio de movilizacion (COP)", s.AuxilioMovilizacion));
+                sb.Append(Row("Salario garantizado", s.SalarioGarantizado));
+                sb.Append(Row("Meses garantizado", s.MesesGarantizado));
+                sb.Append(Row("Promedio variable", s.PromedioVariable));
+                sb.Append(Row("Requiere vehiculo/moto", s.RequiereMoto));
+                sb.Append(Row("Activar proceso por", s.ActivarProcesoPor));
+                sb.Append(Row("Tipo de solicitud", s.TipoSolicitud));
+                sb.Append(Row("Persona a reemplazar", s.PersonaReemplaza));
             }
-            else // ADMINISTRATIVO (u otro)
+            else
             {
-                sb.AppendLine(row("Vicepresidencia", s.Vicepresidencia));
-                sb.AppendLine(row("Área solicitante", s.AreaSolicitante));
-                sb.AppendLine(row("Cargo jefe inmediato", s.CargoJefeInmediato));
-                sb.AppendLine(row("Tipo de jornada", s.TipoJornada));
-                sb.AppendLine(row("Horario (texto)", s.HorarioTrabajo));
-                sb.AppendLine(row("Hora inicio", s.HoraInicio));
-                sb.AppendLine(row("Hora fin", s.HoraFin));
-                sb.AppendLine(row("Días laborales", s.DiasLaborales));
-                sb.AppendLine(row("Centro de Costos", s.CentroCostos));
-                sb.AppendLine(row("Tipo de solicitud", s.TipoSolicitud));
-                sb.AppendLine(row("Tipo de contrato", s.TipoContrato));
-                sb.AppendLine(row("# Meses (si fijo)", s.MesesContrato));
-                sb.AppendLine(row("Ciudad de trabajo", s.CiudadTrabajo));
-                sb.AppendLine(row("Activar proceso por", s.ActivarProcesoPor));
-                sb.AppendLine(row("Persona a reemplazar", s.PersonaReemplaza));
+                sb.Append(Row("Vicepresidencia", s.Vicepresidencia));
+                sb.Append(Row("Area solicitante", s.AreaSolicitante));
+                sb.Append(Row("Cargo jefe inmediato", s.CargoJefeInmediato));
+                sb.Append(Row("Tipo de jornada", s.TipoJornada));
+                sb.Append(Row("Horario", s.HorarioTrabajo));
+                sb.Append(Row("Hora inicio", s.HoraInicio));
+                sb.Append(Row("Hora fin", s.HoraFin));
+                sb.Append(Row("Dias laborales", s.DiasLaborales));
+                sb.Append(Row("Centro de Costos", s.CentroCostos));
+                sb.Append(Row("Tipo de solicitud", s.TipoSolicitud));
+                sb.Append(Row("Tipo de contrato", s.TipoContrato));
+                sb.Append(Row("# Meses (si fijo)", s.MesesContrato?.ToString()));
+                sb.Append(Row("Ciudad de trabajo", s.CiudadTrabajo));
+                sb.Append(Row("Activar proceso por", s.ActivarProcesoPor));
+                sb.Append(Row("Persona a reemplazar", s.PersonaReemplaza));
             }
 
-            sb.AppendLine(row("Justificación", s.Justificacion));
-            sb.AppendLine("</table>");
+            sb.Append(Row("Justificacion", s.Justificacion));
+            sb.Append("</table>");
             return sb.ToString();
-        }
+        } 
         private string TemplateCorreoInfoSolicitante(SolicitudPersonal s, string estadoTitulo)
         {
             var titulo = $"Requisición #{s.Id} — {estadoTitulo}";
@@ -921,7 +1029,6 @@ namespace BackendRequisicionPersonal.Controllers
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
 
-            // Decidir a dónde debe ir el botón "APROBAR" según el estado mostrado en el correo
             string aprobarUrl;
             string info;
             if (estadoTitulo.Contains("REVISIÓN", StringComparison.OrdinalIgnoreCase))
@@ -969,7 +1076,17 @@ namespace BackendRequisicionPersonal.Controllers
             </div>" + DetallePorTipo(s);
 
             var aprobarUrl = BuildAccionUrl(s.Id, "APROBADA", aprobadorEmail);
-            var rechazarUrl = BuildFrontRechazoUrl(s.Id, aprobadorEmail);
+
+            // 🔍 Determinar el nivel del aprobador según el correo (ajustado a tu modelo real)
+            var nivel = 0;
+            if (!string.IsNullOrWhiteSpace(aprobadorEmail))
+            {
+                if (string.Equals(s.Ap1Correo?.Trim(), aprobadorEmail.Trim(), StringComparison.OrdinalIgnoreCase)) nivel = 1;
+                else if (string.Equals(s.Ap2Correo?.Trim(), aprobadorEmail.Trim(), StringComparison.OrdinalIgnoreCase)) nivel = 2;
+                else if (string.Equals(s.Ap3Correo?.Trim(), aprobadorEmail.Trim(), StringComparison.OrdinalIgnoreCase)) nivel = 3;
+            }
+
+            var rechazarUrl = BuildFrontRechazoUrl(s.Id, aprobadorEmail, nivel);
 
             var buttons = $@"
             <div style='margin:18px 0; display:flex; gap:12px;'>
@@ -991,20 +1108,24 @@ namespace BackendRequisicionPersonal.Controllers
         {
             var header = EncabezadoBasico(s) + DetallePorTipo(s);
 
-            var aprobarUrl = BuildAccionUrl(s.Id, "CERRADO");
-            var rechazarUrl = BuildFrontRechazoUrl(s.Id);
+            // ✅ Aprobación directa al backend
+            var aprobarUrl = BuildAccionUrl(s.Id, "APROBADO POR VP GH");
+
+            // ✅ Rechazo pasa por el front para capturar motivo
+            //    Se agrega el flag ?vpgh=true para que el front sepa de dónde viene
+            var rechazarUrl = BuildFrontRechazoUrl(s.Id) + "&vpgh=true";
 
             var buttons = $@"
-            <div style='margin:18px 0; display:flex; gap:12px;'>
-              <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
-                 style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-                 APROBAR (Cerrar)
-              </a>
-              <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
-                 style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
-                 RECHAZAR
-              </a>
-            </div>";
+    <div style='margin:18px 0; display:flex; gap:12px;'>
+      <a href='{WebUtility.HtmlEncode(aprobarUrl)}'
+         style='display:inline-block; padding:12px 20px; background:#16a34a; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+         APROBAR (Cerrar)
+      </a>
+      <a href='{WebUtility.HtmlEncode(rechazarUrl)}'
+         style='display:inline-block; padding:12px 20px; background:#dc2626; color:#fff; text-decoration:none; border-radius:6px; font-weight:bold;'>
+         RECHAZAR
+      </a>
+    </div>";
 
             var titulo = $"Requisición #{s.Id} — EN VP GH";
             return ShellCorreo(titulo, header + buttons);
@@ -1057,7 +1178,35 @@ namespace BackendRequisicionPersonal.Controllers
                 return StatusCode(500, new { success = false, message = "Error interno del servidor" });
             }
         }
-        private string BuildFrontRechazoUrl(int id, string? actorEmail = null)
+
+        [HttpGet("listar-pendientes-vpgh")]
+        public async Task<IActionResult> ListarPendientesVpGh([FromQuery] string correo)
+        {
+            _logger.LogInformation("➡️ GET /api/requisiciones/listar-pendientes-vpgh correo={Correo}", correo);
+
+            try
+            {
+                if (string.IsNullOrWhiteSpace(correo))
+                    return BadRequest(new { success = false, message = "Debe indicar el parámetro correo (correo de VP GH)." });
+
+                var data = await _service.ListarPendientesVpGh(correo);
+
+                if (data == null || data.Count == 0)
+                {
+                    _logger.LogWarning("⚠️ Sin requisiciones pendientes para VP GH {Correo}", correo);
+                    return NotFound(new { success = false, message = "Sin pendientes para VP GH." });
+                }
+
+                _logger.LogInformation("✅ {Total} requisiciones encontradas para VP GH {Correo}", data.Count, correo);
+                return Ok(new { success = true, total = data.Count, data });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error en listar-pendientes-vpgh correo={Correo}", correo);
+                return StatusCode(500, new { success = false, message = "Error interno del servidor" });
+            }
+        }
+        private string BuildFrontRechazoUrl(int id, string? actorEmail = null, int? nivel = null)
         {
             var baseUrl = _config["Frontend:BaseUrl"];
 
@@ -1070,9 +1219,41 @@ namespace BackendRequisicionPersonal.Controllers
             var url = $"{baseUrl}/rechazar?id={id}";
             if (!string.IsNullOrWhiteSpace(actorEmail))
                 url += $"&actorEmail={Uri.EscapeDataString(actorEmail)}";
+            if (nivel.HasValue && nivel > 0)
+                url += $"&nivel={nivel.Value}";
 
             return url;
         }
+        [HttpGet("pdf/{id}")]
+        public IActionResult GenerarPdf(int id, [FromServices] PdfService pdfService)
+        {
+            try
+            {
+                // 1. Obtener la solicitud
+                var sol = _service.ObtenerSolicitudPorId(id);
+                if (sol == null)
+                    return NotFound(new { success = false, message = "Solicitud no encontrada" });
+
+                string estadoTitulo = EstadoTitulo(sol.Estado);
+                string titulo = $"Requisición #{sol.Id} — {estadoTitulo}";
+
+                string contenido = EncabezadoBasico(sol) + DetallePorTipo(sol);
+
+                string html = ShellCorreo(titulo, contenido);
+
+                // 5. Convertir HTML → PDF
+                var pdfBytes = pdfService.HtmlToPdf(html);
+
+                // 6. Retornar el archivo PDF
+                return File(pdfBytes, "application/pdf", $"Requisicion_{sol.Id}.pdf");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "❌ Error al generar PDF para id={Id}: {Msg}", id, ex.Message);
+                return StatusCode(500, new { success = false, message = "Error interno al generar PDF" });
+            }
+        }
+
 
     }
 }
