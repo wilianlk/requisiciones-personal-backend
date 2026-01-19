@@ -69,6 +69,12 @@
         public string FechaIngresoSeleccionado { get; set; }
         public string TipoContratoSeleccionado { get; set; }
 
+        public string NominaRevNombre { get; set; }
+        public string NominaRevCorreo { get; set; }
+        public string NominaRevFecha { get; set; }
+        public string NominaRevEstado { get; set; }
+        public string NominaRevMotivo { get; set; }
+
         public string Ap1Nombre { get; set; }
         public string Ap1Correo { get; set; }
         public string Ap1Estado { get; set; }

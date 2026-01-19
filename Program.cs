@@ -2,6 +2,7 @@ using System.IO;
 using BackendRequisicionPersonal.Models.Settings;
 using BackendRequisicionPersonal.Services;
 using BackendRequisicionPersonal.Services.Auth;
+using BackendRequisicionPersonal.Services.Email;
 using Microsoft.Extensions.FileProviders;
 using Serilog;
 using DinkToPdf;
@@ -31,8 +32,54 @@ builder.Host.UseSerilog();
 /* dependencias */
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddControllers();
+
+// Servicios de negocio principales
 builder.Services.AddScoped<SolicitudesPersonalService>();
 builder.Services.AddScoped<AuthService>();
+
+// Servicios especializados de requisiciones
+builder.Services.AddScoped<AprobacionService>(sp =>
+{
+    var config = sp.GetRequiredService<IConfiguration>();
+    var env = sp.GetRequiredService<IWebHostEnvironment>();
+    var logger = sp.GetRequiredService<ILogger<AprobacionService>>();
+    
+    var connectionString = env.IsProduction()
+        ? config.GetConnectionString("InformixConnectionProduction")
+        : config.GetConnectionString("InformixConnection");
+    
+    return new AprobacionService(config, logger, connectionString);
+});
+
+builder.Services.AddScoped<ConsultasPersonalService>(sp =>
+{
+    var env = sp.GetRequiredService<IWebHostEnvironment>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var logger = sp.GetRequiredService<ILogger<ConsultasPersonalService>>();
+    
+    var connectionString = env.IsProduction()
+        ? config.GetConnectionString("InformixConnectionProduction")
+        : config.GetConnectionString("InformixConnection");
+    
+    return new ConsultasPersonalService(logger, connectionString);
+});
+
+builder.Services.AddScoped<ReportesService>(sp =>
+{
+    var env = sp.GetRequiredService<IWebHostEnvironment>();
+    var config = sp.GetRequiredService<IConfiguration>();
+    var logger = sp.GetRequiredService<ILogger<ReportesService>>();
+    
+    var connectionString = env.IsProduction()
+        ? config.GetConnectionString("InformixConnectionProduction")
+        : config.GetConnectionString("InformixConnection");
+    
+    return new ReportesService(logger, connectionString);
+});
+
+// Servicios de Email
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddSingleton<EmailTemplateService>();
 
 // PDF
 builder.Services.AddSingleton(typeof(IConverter), new SynchronizedConverter(new PdfTools()));
